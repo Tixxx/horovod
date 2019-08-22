@@ -385,11 +385,13 @@ def test_compile(build_ext, name, code, libraries=None, include_dirs=None,
 def get_cuda_dirs(build_ext, cpp_flags):
     cuda_include_dirs = []
     cuda_lib_dirs = []
+    cuda_bin_dir = None
 
     cuda_home = os.environ.get('HOROVOD_CUDA_HOME')
     if cuda_home:
         cuda_include_dirs += ['%s/include' % cuda_home]
         cuda_lib_dirs += ['%s/lib' % cuda_home, '%s/lib64' % cuda_home]
+        cuda_bin_dir = '%s/bin' % cuda_home
 
     cuda_include = os.environ.get('HOROVOD_CUDA_INCLUDE')
     if cuda_include:
@@ -401,9 +403,9 @@ def get_cuda_dirs(build_ext, cpp_flags):
 
     cuda_bin = os.environ.get('HOROVOD_CUDA_BIN')
     if cuda_bin:
-        cuda_bin_dir = [cuda_bin]
+        cuda_bin_dir = cuda_bin
 
-    if not cuda_include_dirs and not cuda_lib_dirs:
+    if not cuda_include_dirs and not cuda_lib_dirs and not cuda_bin_dir:
         # default to /usr/local/cuda
         cuda_include_dirs += ['/usr/local/cuda/include']
         cuda_lib_dirs += ['/usr/local/cuda/lib', '/usr/local/cuda/lib64']
