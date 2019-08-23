@@ -661,6 +661,7 @@ def get_common_options(build_ext):
     if have_cuda:
         MACROS += [('HAVE_CUDA', '1')]
         INCLUDES += cuda_include_dirs
+        INCLUDES += ['horovod/common/ops/cuda']
         SOURCES += ['horovod/common/ops/cuda_operations.cc',
                     'horovod/common/ops/mpi_cuda_operations.cc',
                     'horovod/common/ops/msallreduce_cuda_operations.cc']

@@ -78,6 +78,9 @@ cudaDataType_t CublasContext::GetCublasDataType(T* variable) {
 }
 
 //thread_local cublasHandle_t MsCudaAllreduceOp::cublas_Handle;
+thread_local double* MsCudaAllreduceOp::device_normsq_memory_a;
+thread_local double* MsCudaAllreduceOp::device_normsq_memory_b;
+thread_local double* MsCudaAllreduceOp::device_dot_product_memory;
 
 MsCudaAllreduceOp::MsCudaAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context, HorovodGlobalState* global_state)
     : MsAllreduceOp(mpi_context, global_state), cuda_context_(cuda_context) {
