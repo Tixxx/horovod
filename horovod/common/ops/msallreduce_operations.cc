@@ -303,8 +303,8 @@ void MsAllreduceOp::SyncLocalReduce(T *grad_buffer, T *recv_buffer, int count, M
       double anormsq = 0, bnormsq = 0, dotProduct = 0;
       dotProdFunc(grad_buffer, recv_buffer, count, dotProduct, anormsq, bnormsq, global_state_, layerid);
       
-      float acoeff = 1;
-      float bcoeff = 1;
+      double acoeff = 1;
+      double bcoeff = 1;
       if (anormsq >= 1e-8)
 	    acoeff = 1.0 - dotProduct / anormsq * 0.5;
       if (bnormsq >= 1e-8)

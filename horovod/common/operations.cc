@@ -49,6 +49,7 @@
 
 #if HAVE_CUDA
 #include "ops/msallreduce_cuda_operations.h"
+#include "ops/msallreduce_cuda_ring_operations.h"
 #include "ops/cuda_operations.h"
 #include "ops/mpi_cuda_operations.h"
 #endif
@@ -157,7 +158,7 @@ OperationManager* CreateOperationManager(HorovodGlobalState& state) {
 #if HOROVOD_GPU_ALLREDUCE == 'M'
   if (state.msallreduce_enabled == true){
     LOG(INFO) << "msallGpureduce enabled.";
-    msallreduce_ops.push_back(std::shared_ptr<AllreduceOp>(new MsCudaAllreduceOp(&mpi_context, &cuda_context, &state)));
+    msallreduce_ops.push_back(std::shared_ptr<AllreduceOp>(new MsCudaRingAllreduceOp(&mpi_context, &cuda_context, &state)));
   }
   allreduce_ops.push_back(std::shared_ptr<AllreduceOp>(
       new MPI_CUDAAllreduce(&mpi_context, &cuda_context, &state)));

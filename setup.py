@@ -664,7 +664,8 @@ def get_common_options(build_ext):
         INCLUDES += ['horovod/common/ops/cuda']
         SOURCES += ['horovod/common/ops/cuda_operations.cc',
                     'horovod/common/ops/mpi_cuda_operations.cc',
-                    'horovod/common/ops/msallreduce_cuda_operations.cc']
+                    'horovod/common/ops/msallreduce_cuda_operations.cc',
+                    'horovod/common/ops/msallreduce_cuda_ring_operations.cc']
         LIBRARY_DIRS += cuda_lib_dirs
         LIBRARIES += ['cudart', 'cublas']
 
@@ -806,7 +807,8 @@ def build_mx_extension(build_ext, options):
         options['INCLUDES'] += cuda_include_dirs
         options['SOURCES'] += ['horovod/common/ops/cuda_operations.cc',
                                'horovod/common/ops/mpi_cuda_operations.cc',
-                                'horovod/common/ops/msallreduce_cuda_operations.cc']
+                                'horovod/common/ops/msallreduce_cuda_operations.cc',
+                                'horovod/common/ops/msallreduce_cuda_ring_operations.cc']
         options['LIBRARY_DIRS'] += cuda_lib_dirs
         options['LIBRARIES'] += ['cudart', 'cublas']
 
