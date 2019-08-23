@@ -15,6 +15,7 @@
 // =============================================================================
 
 #include "msallreduce_cuda_ring_operations.h"
+#include "msallreduce_cuda_kernels.h"
 
 namespace horovod {
 namespace common {
@@ -35,6 +36,10 @@ void PSLRingOpInit(Message* message, void* grad_buf, void* recv_buf, int count, 
 	Ring*	ring = all_rings.PickRing(count);
 	all_rings.InitMessageInRing(message, ring, (rank == (grad_tag % 8)), count, grad_buf, recv_buf, datatype, comm, grad_tag);
 }
+
+thread_local double* MsCudaRingAllreduceOp::device_normsq_memory_a;
+thread_local double* MsCudaRingAllreduceOp::device_normsq_memory_b;
+thread_local double* MsCudaRingAllreduceOp::device_dot_product_memory;
 
 MsCudaRingAllreduceOp::MsCudaRingAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context, HorovodGlobalState* global_state)
     : MsAllreduceOp(mpi_context, global_state), mpi_context_(mpi_context), cuda_context_(cuda_context) {
@@ -68,8 +73,23 @@ void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid)
                                 cudaDeviceGetStreamPriorityRange(NULL, &greatest_priority));
       cuda_context_->ErrorCheck("cudaStreamCreateWithPriority",
                                 cudaStreamCreateWithPriority(&device_stream, cudaStreamNonBlocking, greatest_priority));
+
+      cuda_context_->ErrorCheck("cudaMalloc",
+                                cudaMalloc(&device_normsq_memory_a, sizeof(double)));
+      cuda_context_->ErrorCheck("cudaMalloc",
+                                cudaMalloc(&device_normsq_memory_b, sizeof(double)));
+      cuda_context_->ErrorCheck("cudaMalloc",
+                                cudaMalloc(&device_dot_product_memory, sizeof(double)));
     }
   }
+}
+
+void MsCudaRingAllreduceOp::FinalizeCUDA() {
+		if (device_normsq_memory_a != nullptr){
+			cudaFree(device_normsq_memory_a);
+			cudaFree(device_normsq_memory_b);
+			cudaFree(device_dot_product_memory);
+		}
 }
 
 Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const Response& response) {
@@ -261,6 +281,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     if(entry.tensor->data() != entry.output->data()) {
       memcpyUtil(entry, (void *) entry.output->data(), (void *) entry.tensor->data(), (size_t) entry.tensor->size(), layerid);
     }
+		FinalizeCUDA();
   }
 
   return Status::OK();
@@ -366,13 +387,13 @@ bool AllreduceMessage::Test() {
         // call the cuda kernel
         switch(datatype) {
           case HOROVOD_FLOAT16:
-            //psl_cuda_reduction(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf, a_normsq, b_normsq, dot);
+            MsCudaPairwiseReduce(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
             break;
           case HOROVOD_FLOAT32:
-            //psl_cuda_reduction(count, (float*)grad_buf, (float*)recv_buf, a_normsq, b_normsq, dot);
+            MsCudaPairwiseReduce(count, (float*)grad_buf, (float*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
             break;
           case HOROVOD_FLOAT64:
-            //psl_cuda_reduction(count, (double*)grad_buf, (double*)recv_buf, a_normsq, b_normsq, dot);
+            MsCudaPairwiseReduce(count, (double*)grad_buf, (double*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
             break;
           default:
             throw std::logic_error("Message::Test: Unsupported data type.");
@@ -429,13 +450,13 @@ bool ReduceMessage::Test() {
         // call the cuda kernel
         switch(datatype) {
           case HOROVOD_FLOAT16:
-            //psl_cuda_reduction(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf, a_normsq, b_normsq, dot);
+            MsCudaPairwiseReduce(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
             break;
           case HOROVOD_FLOAT32:
-            //psl_cuda_reduction(count, (float*)grad_buf, (float*)recv_buf, a_normsq, b_normsq, dot);
+            MsCudaPairwiseReduce(count, (float*)grad_buf, (float*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
             break;
           case HOROVOD_FLOAT64:
-            //psl_cuda_reduction(count, (double*)grad_buf, (double*)recv_buf, a_normsq, b_normsq, dot);
+            MsCudaPairwiseReduce(count, (double*)grad_buf, (double*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
             break;
           default:
             throw std::logic_error("Message::Test: Unsupported data type.");

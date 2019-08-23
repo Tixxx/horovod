@@ -38,13 +38,17 @@ class MsCudaRingAllreduceOp : public MsAllreduceOp {
   Status Execute(std::vector<TensorTableEntry>& entries,
                  const Response& response) override;
 
+	thread_local static double* device_normsq_memory_a;
+	thread_local static double* device_normsq_memory_b;
+	thread_local static double* device_dot_product_memory;
+
   protected:
   struct MPIContext* mpi_context_;
   struct CUDAContext* cuda_context_;
   std::deque<FusionBufferManager> buffer_managers_;
 
   void InitCUDA(const TensorTableEntry& entry, int layerid);
-
+	void FinalizeCUDA();
   void memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) override;
 };
 
