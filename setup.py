@@ -43,7 +43,7 @@ torch_mpi_lib_v2 = Extension('horovod.torch.mpi_lib_v2', [])
 mxnet_mpi_lib = Extension('horovod.mxnet.mpi_lib', [])
 gloo_lib = CMakeExtension('gloo', cmake_lists_dir='third_party/gloo',
                           sources=[])
-msallreduce_cuda_lib = CMakeExtension('msallreduce_cuda', cmake_lists_dir='horovod/common/ops/cuda',
+msallreduce_cuda_lib = CMakeExtension('msallreduce_cuda_kernels', cmake_lists_dir='horovod/common/ops/cuda',
                           sources=[])
 
 mlsl_root = os.environ.get('MLSL_ROOT')
@@ -1172,7 +1172,7 @@ setup(name='horovod',
           'License :: OSI Approved :: Apache Software License'
       ],
       ext_modules=[tensorflow_mpi_lib, torch_mpi_lib, torch_mpi_lib_impl,
-                   torch_mpi_lib_v2, mxnet_mpi_lib, gloo_lib],
+                   torch_mpi_lib_v2, mxnet_mpi_lib, gloo_lib, msallreduce_cuda_lib],
       cmdclass={'build_ext': custom_build_ext},
       # cffi is required for PyTorch
       # If cffi is specified in setup_requires, it will need libffi to be installed on the machine,
