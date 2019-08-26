@@ -114,15 +114,14 @@ void MsCudaAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid) {
                                 cudaDeviceGetStreamPriorityRange(NULL, &greatest_priority));
       cuda_context_->ErrorCheck("cudaStreamCreateWithPriority",
                                 cudaStreamCreateWithPriority(&device_stream, cudaStreamNonBlocking, greatest_priority));
-
-      cuda_context_->ErrorCheck("cudaMalloc",
-                                cudaMalloc(&device_normsq_memory_a, sizeof(double)));
-      cuda_context_->ErrorCheck("cudaMalloc",
-                                cudaMalloc(&device_normsq_memory_b, sizeof(double)));
-      cuda_context_->ErrorCheck("cudaMalloc",
-                                cudaMalloc(&device_dot_product_memory, sizeof(double)));
     }
   }
+  cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_normsq_memory_a, sizeof(double)));
+  cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_normsq_memory_b, sizeof(double)));
+  cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_dot_product_memory, sizeof(double)));
 
 //  auto status = cublasCreate(&cublas_Handle);
 //  CublasContext::ErrorCheck("cublasCreate", status);
@@ -268,7 +267,7 @@ Status MsCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const 
 void MsCudaAllreduceOp::memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) {
     assert(dest != nullptr);
     assert(src != nullptr);
-    LOG(INFO, global_state_->rank)<<"memcpyUtil GPU. "<<std::this_thread::get_id();
+    LOG(INFO, global_state_->rank)<<"memcpyUtil GPU. "<<std::this_thread::get_id()<<" for entry device "<<entry.device;
     auto cuda_result = cudaMemcpyAsync(dest, src,
                                     buffer_len, 
                                     cudaMemcpyDeviceToDevice,
@@ -287,7 +286,7 @@ void MsCudaAllreduceOp::DotProductImpl(const T* __restrict__  a,
                                        double& bnormsq, 
                                        HorovodGlobalState *global_state,
                                        int layerid) {
-  CudaDotProductImpl(n, a, b, device_normsq_memory_a, device_normsq_memory_b, device_dot_product_memory);
+  CudaDotProductImpl(n, a, b, device_normsq_memory_a, device_normsq_memory_b, device_dot_product_memory, anormsq, bnormsq, dotProduct);
 }
 
 template<typename T>
