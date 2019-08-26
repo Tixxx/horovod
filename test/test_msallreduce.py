@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+import time
 
 import itertools
 import numpy as np
@@ -50,9 +51,10 @@ class MPITests(tf.test.TestCase):
 
     def test_horovod_multiple_allreduce_cpu(self):
         """Test on CPU that the allreduce correctly sums 1D, 2D, 3D tensors."""
+        print("HHHHHHH 111", flush=True)
         hvd.init()
+        print("HHHHHHH 222", flush=True)
         size = hvd.size()
-        
         rank0_tensors = [np.asarray([[1.0, 2.0], [3.0, 4.0]]), np.asarray([[9.0, 10.0], [11.0, 12.0]])]
         rank1_tensors = [np.asarray([[5.0, 6.0], [7.0, 8.0]]), np.asarray([[13.0, 14.0], [15.0, 16.0]])]
 
@@ -78,6 +80,7 @@ class MPITests(tf.test.TestCase):
 
     def test_horovod_multiple_allreduce_gpu(self):
         """Test on CPU that the allreduce correctly sums 1D, 2D, 3D tensors."""
+        print("GGGGGGG 222", flush=True)
         hvd.init()
         size = hvd.size()
         

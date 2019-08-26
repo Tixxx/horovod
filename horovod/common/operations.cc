@@ -981,6 +981,7 @@ bool RunLoopOnce(HorovodGlobalState& state, MPIContext& ctx,
                  bool is_coordinator);
 
 void BackgroundThreadLoop(HorovodGlobalState& state, MPIContext& ctx) {
+  LOG(INFO, state.rank) << "TTTTTTTTT";
   // Initialize MPI if it was not initialized. This must happen on the
   // background thread, since not all MPI implementations support being called
   // from multiple threads.
@@ -1028,10 +1029,13 @@ void BackgroundThreadLoop(HorovodGlobalState& state, MPIContext& ctx) {
   // parasail new algo begin
   // TODO make this a condition and merge with horovod's hiearchical allreduce
 if(state.msallreduce_enabled == true) {
+    printf("WWWWWWWWWWWWWWWWW\n");
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &state.local_comm);
+    printf("WWWWWWWWWWWWWWWWW 1\n");
     int ms_local_rank, ms_local_size;
     MPI_Comm_size(state.local_comm, &ms_local_size);
     MPI_Comm_rank(state.local_comm, &ms_local_rank);
+    printf("WWWWWWWWWWWWWWWWW 2\n");
     if (ms_local_rank == 0)
     {
         int rank, size;
@@ -1067,9 +1071,11 @@ if(state.msallreduce_enabled == true) {
             MPI_Comm_create_group(MPI_COMM_WORLD, red_group, 0, &state.reduction_comms[shift_val - 1]);
             MPI_Group_free(&red_group);
         }
+        printf("WWWWWWWWWWWWWWWWW 3\n");
 
         delete[] node_rank;
     }  
+    printf("WWWWWWWWWWWWWWWWW 4\n");
     // TODO parasail new algo end
   }
 

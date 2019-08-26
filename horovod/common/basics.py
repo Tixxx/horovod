@@ -17,16 +17,19 @@ import atexit
 import ctypes
 
 import horovod.common.util as util
+print("HHHHHH 115", flush=True)
 
 
 class HorovodBasics(object):
     """Wrapper class for the basic Horovod API."""
 
     def __init__(self, pkg_path, *args):
+        print("HHHHHHHHHH 2", flush=True)
         full_path = util.get_extension_full_path(pkg_path, *args)
         self.MPI_LIB_CTYPES = ctypes.CDLL(full_path, mode=ctypes.RTLD_GLOBAL)
 
     def init(self, comm=None):
+        print("RRRRRRRRRRRR", flush=True)
         """A function that initializes Horovod.
 
         Args:

@@ -18,6 +18,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+print("HHHHHH 112", flush=True)
 
 import os
 
@@ -32,6 +33,7 @@ from horovod.tensorflow.mpi_ops import size, local_size, rank, local_rank
 from horovod.tensorflow.mpi_ops import mpi_threads_supported
 from horovod.tensorflow.mpi_ops import AllreduceType
 from horovod.tensorflow.util import _executing_eagerly
+print("HHHHHH 113", flush=True)
 
 import tensorflow as tf
 
