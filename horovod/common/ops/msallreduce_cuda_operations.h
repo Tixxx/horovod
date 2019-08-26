@@ -20,16 +20,16 @@
 
 #include "msallreduce_operations.h"
 #include "cuda_operations.h"
-#include "cublas_v2.h"
+//#include "cublas_v2.h"
 #include "cuda_fp16.h"
 
 namespace horovod {
 namespace common {
 class CublasContext {
   public:
-  std::string static GetCublasErrorString (cublasStatus_t cublas_result);
+//  std::string static GetCublasErrorString (cublasStatus_t cublas_result);
 
-  void static ErrorCheck(std::string op_name, cublasStatus_t cublas_result);
+//  void static ErrorCheck(std::string op_name, cublasStatus_t cublas_result);
 
   template<typename T>
   cudaDataType_t static GetCublasDataType (T* variable);
@@ -50,15 +50,19 @@ class MsCudaAllreduceOp : public MsAllreduceOp {
   protected:
   struct CUDAContext* cuda_context_;
 
-  thread_local static cublasHandle_t cublas_Handle;
+//  thread_local static cublasHandle_t cublas_Handle;
 
-  static cublasHandle_t get_cublasHandle() {
+	thread_local static double* device_normsq_memory_a;
+	thread_local static double* device_normsq_memory_b;
+	thread_local static double* device_dot_product_memory;
+
+/*  static cublasHandle_t get_cublasHandle() {
       return cublas_Handle;
-  }
+  }*/
 
-  void InitCUDAandCUBLAS(const TensorTableEntry& entry, int layerid);
+  void InitCUDA(const TensorTableEntry& entry, int layerid);
 
-  void FinalizeCUDAandCUBLAS();
+  void FinalizeCUDA();
 
   void memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) override;
 

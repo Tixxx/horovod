@@ -15,10 +15,13 @@
 // =============================================================================
 
 #include "msallreduce_cuda_operations.h"
+#include "msallreduce_cuda_kernels.h"
 #include <boost/asio/post.hpp>
 
 namespace horovod {
 namespace common {
+
+/*
 std::string CublasContext::GetCublasErrorString (cublasStatus_t cublas_result) {
   switch (cublas_result) {
       case CUBLAS_STATUS_NOT_INITIALIZED:
@@ -52,11 +55,13 @@ std::string CublasContext::GetCublasErrorString (cublasStatus_t cublas_result) {
         return std::string("Unknown CUBLAS error!");
   }
 }
+
 void CublasContext::ErrorCheck(std::string op_name, cublasStatus_t cublas_result) {
     if (cublas_result != CUBLAS_STATUS_SUCCESS) {
         throw std::logic_error(std::string(op_name) + " failed: " + GetCublasErrorString(cublas_result));
     }
 }
+*/
 
 template<typename T>
 cudaDataType_t CublasContext::GetCublasDataType(T* variable) {
@@ -72,13 +77,16 @@ cudaDataType_t CublasContext::GetCublasDataType(T* variable) {
   throw std::logic_error("Unsupported CUDA type!");
 }
 
-thread_local cublasHandle_t MsCudaAllreduceOp::cublas_Handle;
+//thread_local cublasHandle_t MsCudaAllreduceOp::cublas_Handle;
+thread_local double* MsCudaAllreduceOp::device_normsq_memory_a;
+thread_local double* MsCudaAllreduceOp::device_normsq_memory_b;
+thread_local double* MsCudaAllreduceOp::device_dot_product_memory;
 
 MsCudaAllreduceOp::MsCudaAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context, HorovodGlobalState* global_state)
     : MsAllreduceOp(mpi_context, global_state), cuda_context_(cuda_context) {
     }
 
-void MsCudaAllreduceOp::InitCUDAandCUBLAS(const TensorTableEntry& entry, int layerid) {
+void MsCudaAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid) {
   cuda_context_->ErrorCheck("cudaSetDevice", cudaSetDevice(entry.device));
 
   LOG(INFO, global_state_->rank)<<"Checking for existing stream for layer "<<layerid<<" "<<std::this_thread::get_id();
@@ -108,20 +116,31 @@ void MsCudaAllreduceOp::InitCUDAandCUBLAS(const TensorTableEntry& entry, int lay
                                 cudaStreamCreateWithPriority(&device_stream, cudaStreamNonBlocking, greatest_priority));
     }
   }
+  cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_normsq_memory_a, sizeof(double)));
+  cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_normsq_memory_b, sizeof(double)));
+  cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_dot_product_memory, sizeof(double)));
 
-  auto status = cublasCreate(&cublas_Handle);
-  CublasContext::ErrorCheck("cublasCreate", status);
+//  auto status = cublasCreate(&cublas_Handle);
+//  CublasContext::ErrorCheck("cublasCreate", status);
 
-  cublasSetStream(cublas_Handle, stream);
-  cudaStreamSynchronize(stream);
-  LOG(INFO, global_state_->rank)<<"Successfully initialized cublas. "<<std::this_thread::get_id();
+//  cublasSetStream(cublas_Handle, stream);
+//  cudaStreamSynchronize(stream);
+//  LOG(INFO, global_state_->rank)<<"Successfully initialized cublas. "<<std::this_thread::get_id();
 }
 
-void MsCudaAllreduceOp::FinalizeCUDAandCUBLAS() {
-    if(cublas_Handle != nullptr) {
+void MsCudaAllreduceOp::FinalizeCUDA() {
+		if (device_normsq_memory_a != nullptr){
+			cudaFree(device_normsq_memory_a);
+			cudaFree(device_normsq_memory_b);
+			cudaFree(device_dot_product_memory);
+		}
+/*    if(cublas_Handle != nullptr) {
       auto status = cublasDestroy(cublas_Handle);
       CublasContext::ErrorCheck("cublasDestroy", status);
-    }
+    }*/
 }
 
 Status MsCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const Response& response) {
@@ -185,7 +204,7 @@ Status MsCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const 
       }
     
       // This will create a stream per layer.
-      InitCUDAandCUBLAS(entry, layerid);
+      InitCUDA(entry, layerid);
       LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
       switch (entry.output->dtype()) {
           case HOROVOD_FLOAT16:
@@ -233,7 +252,7 @@ Status MsCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const 
         memcpyUtil(entry, (void *) entry.output->data(), (void *) entry.tensor->data(), (size_t) entry.tensor->size(), layerid);
       }
       LOG(INFO, global_state_->rank)<<"Finished ms gpu allreduction, exiting operation";
-      FinalizeCUDAandCUBLAS();
+      FinalizeCUDA();
       global_state_->finished_parallel_reductions++;
     });
     layerid++;
@@ -248,7 +267,7 @@ Status MsCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const 
 void MsCudaAllreduceOp::memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) {
     assert(dest != nullptr);
     assert(src != nullptr);
-    LOG(INFO, global_state_->rank)<<"memcpyUtil GPU. "<<std::this_thread::get_id();
+    LOG(INFO, global_state_->rank)<<"memcpyUtil GPU. "<<std::this_thread::get_id()<<" for entry device "<<entry.device;
     auto cuda_result = cudaMemcpyAsync(dest, src,
                                     buffer_len, 
                                     cudaMemcpyDeviceToDevice,
@@ -258,6 +277,24 @@ void MsCudaAllreduceOp::memcpyUtil(TensorTableEntry entry, void* dest, void* src
     cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_sync_result);
 }
 
+template<typename T>
+void MsCudaAllreduceOp::DotProductImpl(const T* __restrict__  a, 
+                                       const T* __restrict__ b, 
+                                       int n, 
+                                       double& dotProduct, 
+                                       double& anormsq, 
+                                       double& bnormsq, 
+                                       HorovodGlobalState *global_state,
+                                       int layerid) {
+  CudaDotProductImpl(n, a, b, device_normsq_memory_a, device_normsq_memory_b, device_dot_product_memory, anormsq, bnormsq, dotProduct);
+}
+
+template<typename T>
+void MsCudaAllreduceOp::ScaleAddImpl(int n, double acoeff, T* __restrict__ a, double bcoeff, T* __restrict__ b, HorovodGlobalState *global_state, int layerid) {
+  CudaScaleAddImpl(n, a, b, acoeff, bcoeff);
+}
+
+/*
 template<typename T>
 void MsCudaAllreduceOp::DotProductImpl(const T* __restrict__  a, 
                                        const T* __restrict__ b, 
@@ -317,6 +354,7 @@ void MsCudaAllreduceOp::DotProductImpl(const T* __restrict__  a,
   delete typed_bnormsq;
 }
 
+
 template<typename T>
 void MsCudaAllreduceOp::ScaleAddImpl(int n, double acoeff, T* __restrict__ a, double bcoeff, T* __restrict__ b, HorovodGlobalState *global_state, int layerid) {
 
@@ -337,6 +375,7 @@ void MsCudaAllreduceOp::ScaleAddImpl(int n, double acoeff, T* __restrict__ a, do
   auto cuda_sync_result = cudaStreamSynchronize(stream);
   CUDAContext::ErrorCheck("cudaStreamSynchronize", cuda_sync_result);
 }
+*/
 
 bool MsCudaAllreduceOp::Enabled(const ParameterManager& param_manager,
                             const std::vector<TensorTableEntry>& entries,
