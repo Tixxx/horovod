@@ -16,30 +16,19 @@
 #ifndef HOROVOD_MSALLREDUCE_CUDA_OPERATIONS_H
 #define HOROVOD_MSALLREDUCE_CUDA_OPERATIONS_H
 
-#include <typeinfo>
-
+#include <array>
 #include "msallreduce_operations.h"
 #include "cuda_operations.h"
-//#include "cublas_v2.h"
 #include "cuda_fp16.h"
 
 namespace horovod {
 namespace common {
-class CublasContext {
-  public:
-//  std::string static GetCublasErrorString (cublasStatus_t cublas_result);
-
-//  void static ErrorCheck(std::string op_name, cublasStatus_t cublas_result);
-
-  template<typename T>
-  cudaDataType_t static GetCublasDataType (T* variable);
-};
 
 class MsCudaAllreduceOp : public MsAllreduceOp {
   public:
   MsCudaAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context,
                 HorovodGlobalState* global_state);
-
+  ~MsCudaAllreduceOp();
   bool Enabled(const ParameterManager& param_manager,
                const std::vector<TensorTableEntry>& entries,
                const Response& response) const override;
@@ -50,15 +39,12 @@ class MsCudaAllreduceOp : public MsAllreduceOp {
   protected:
   struct CUDAContext* cuda_context_;
 
-//  thread_local static cublasHandle_t cublas_Handle;
-
-	thread_local static double* device_normsq_memory_a;
-	thread_local static double* device_normsq_memory_b;
-	thread_local static double* device_dot_product_memory;
-
-/*  static cublasHandle_t get_cublasHandle() {
-      return cublas_Handle;
-  }*/
+  // This map stores variables we will use to do msallreduce reduction on GPU with
+  // elements in tuple being:
+  // 1: anormsq
+  // 2: bnormsq
+  // 3: dotproduct
+  static std::unordered_map<std::thread::id, std::array<double*, 3>> thread_to_device_variable_map;
 
   void InitCUDA(const TensorTableEntry& entry, int layerid);
 
