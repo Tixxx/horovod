@@ -19,7 +19,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-print("HHHHHH 113", flush=True)
 import re
 import tensorflow as tf
 from tensorflow.python.framework import load_library
@@ -29,7 +28,6 @@ from tensorflow.python.platform import resource_loader
 from horovod.common.util import get_ext_suffix
 from horovod.common.basics import HorovodBasics as _HorovodBasics
 from horovod.tensorflow.util import _executing_eagerly
-print("HHHHHH 114", flush=True)
 
 
 class AllreduceType:
@@ -55,7 +53,6 @@ MPI_LIB = _load_library('mpi_lib' + get_ext_suffix())
 _basics = _HorovodBasics(__file__, 'mpi_lib')
 
 # import basic methods
-print("HHHHHHHH 1", flush=True)
 init = _basics.init
 shutdown = _basics.shutdown
 size = _basics.size

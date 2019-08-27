@@ -78,8 +78,6 @@ struct HorovodGlobalState {
   HorovodGlobalState() {
     auto horovod_number_of_threads = std::getenv(HOROVOD_NUMBER_OF_MPI_THREADS);
     auto msallreduce = std::getenv(HOROVOD_MSALLREDUCE_ENABLE);
-    printf("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW Initializing horovod global state WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\n");
-    std::fflush(stdout);
     if (msallreduce != nullptr) {
       int msallreduce_value = std::strtol(msallreduce, nullptr, 10);
       msallreduce_enabled = msallreduce_value == 1;

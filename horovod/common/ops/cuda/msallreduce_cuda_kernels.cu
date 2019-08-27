@@ -46,21 +46,48 @@ void CudaScaleAddKernel(int count, T* a, const T* b, TACC a_coeff, TACC b_coeff)
 }
 
 void CudaDotProductImpl(int count, const double* device_a, const double* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot) {
+	double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
+	
+	cudaMemcpy(device_normsq_a, &host_normsq_a, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_normsq_b, &host_normsq_b, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_dot, &host_dot, sizeof(double), cudaMemcpyHostToDevice);
+
 	CudaDotProductKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,
 		THREADS_PER_BLOCK>>>(count, device_a, device_b, device_normsq_a, device_normsq_b, device_dot);
+	cudaMemcpy(&host_normsq_a, device_normsq_a, sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(&host_normsq_b, device_normsq_b, sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(&host_dot, device_dot, sizeof(double), cudaMemcpyDeviceToHost);
+
 }
 
 void CudaDotProductImpl(int count, const float* device_a, const float* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot) {
+						double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
+	
+	cudaMemcpy(device_normsq_a, &host_normsq_a, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_normsq_b, &host_normsq_b, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_dot, &host_dot, sizeof(double), cudaMemcpyHostToDevice);
+
 	CudaDotProductKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,
 		THREADS_PER_BLOCK>>>(count, device_a, device_b, device_normsq_a, device_normsq_b, device_dot);
+	cudaMemcpy(&host_normsq_a, device_normsq_a, sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(&host_normsq_b, device_normsq_b, sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(&host_dot, device_dot, sizeof(double), cudaMemcpyDeviceToHost);
+
 }
 
 void CudaDotProductImpl(int count, const uint16_t* device_a, const uint16_t* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot) {
+	double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
+	
+	cudaMemcpy(device_normsq_a, &host_normsq_a, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_normsq_b, &host_normsq_b, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_dot, &host_dot, sizeof(double), cudaMemcpyHostToDevice);
+
 	CudaDotProductKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,
-		THREADS_PER_BLOCK>>>(count, (__half*)device_a, (__half*)device_b, device_normsq_a, device_normsq_b, device_dot);
+		THREADS_PER_BLOCK>>>(count, (__half*) device_a, (__half*) device_b, device_normsq_a, device_normsq_b, device_dot);
+	cudaMemcpy(&host_normsq_a, device_normsq_a, sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(&host_normsq_b, device_normsq_b, sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(&host_dot, device_dot, sizeof(double), cudaMemcpyDeviceToHost);
+
 }
 
 void CudaScaleAddImpl(int count, double* a_device, const double* b_device, double host_a_coeff, double host_b_coeff) {
@@ -76,27 +103,4 @@ void CudaScaleAddImpl(int count, float* a_device, const float* b_device, double 
 void CudaScaleAddImpl(int count, uint16_t* a_device, const uint16_t* b_device, double host_a_coeff, double host_b_coeff) {
 	CudaScaleAddKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(count, (__half*)a_device, (__half*)b_device,
 		host_a_coeff, host_b_coeff);
-}
-
-
-template<typename T, typename TACC>
-void psl_cuda_reduction(int count, T* a, T* b, TACC* out_normsq_a, TACC* out_normsq_b, TACC* out_dot){
-	TACC normsq_a = 0.f;
-	TACC normsq_b = 0.f;
-	TACC dot = 0.f;
-	cudaMemcpy(out_normsq_a, &normsq_a, sizeof(TACC), cudaMemcpyHostToDevice);
-	cudaMemcpy(out_normsq_b, &normsq_b, sizeof(TACC), cudaMemcpyHostToDevice);
-	cudaMemcpy(out_dot, &dot, sizeof(TACC), cudaMemcpyHostToDevice);
-	normsq_and_dot<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(count, a, b, out_normsq_a, out_normsq_b, out_dot);
-	cudaMemcpy(&normsq_a, out_normsq_a, sizeof(TACC), cudaMemcpyDeviceToHost);
-	cudaMemcpy(&normsq_b, out_normsq_b, sizeof(TACC), cudaMemcpyDeviceToHost);
-	cudaMemcpy(&dot, out_dot, sizeof(TACC), cudaMemcpyDeviceToHost);
-	TACC a_coeff = 1;
-	TACC b_coeff = 1;           
-	if (normsq_a != 0) 
-		a_coeff = 1.0 - dot / normsq_a * 0.5;                                                                                                                                                                                                                      
-	if (normsq_b != 0)
-		b_coeff = 1.0 - dot / normsq_b * 0.5;
-
-	saxpy<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(count, a, b, a_coeff, b_coeff);
 }

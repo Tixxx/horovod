@@ -287,7 +287,7 @@ void MsCudaAllreduceOp::DotProductImpl(const T* __restrict__  a,
                                        double& bnormsq, 
                                        HorovodGlobalState *global_state,
                                        int layerid) {
-  CudaDotProductImpl(n, a, b, device_normsq_memory_a, device_normsq_memory_b, device_dot_product_memory);
+  CudaDotProductImpl(n, a, b, device_normsq_memory_a, device_normsq_memory_b, device_dot_product_memory, anormsq, bnormsq, dotProduct);
 }
 
 template<typename T>

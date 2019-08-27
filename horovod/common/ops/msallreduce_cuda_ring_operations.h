@@ -72,7 +72,8 @@ struct Message {
   MPI_Comm comm;
   MPI_Request req;
   Ring* ring;
-  bool ring_starter_rank;
+  int rank;
+  int ring_starter_rank;
   int leg; // number of legs in the ring has been done
   void* grad_buf;
   void* recv_buf;
@@ -81,7 +82,7 @@ struct Message {
   int count;
 
   Message(MPIContext* mpi_context);
-  void InitMessage(Ring* _ring, bool _ring_starter_rank, int _count, void* _grad_buf, void* _recv_buf, DataType _datatype, MPI_Comm _comm, int _tag);
+  void InitMessage(Ring* _ring, int rank, int _ring_starter_rank, int _count, void* _grad_buf, void* _recv_buf, DataType _datatype, MPI_Comm _comm, int _tag);
   virtual bool Test() = 0;
 protected:
   virtual void Start() = 0;
@@ -112,12 +113,11 @@ struct AllRings {
   int num_rings = 4;
   Ring* rings;
   std::vector<Message*> messages;
-  int num_msgs;
 
   ~AllRings();
   AllRings(int rank, int size);
   Ring* PickRing(int count);
-  void InitMessageInRing(Message* message, Ring* ring, bool ring_starter_rank, int count, void* grad_buf, void* recv_buf, DataType datatype, MPI_Comm comm, int tag);
+  void InitMessageInRing(Message* message, void* grad_buf, void* recv_buf, int count, DataType datatype, MPI_Comm comm, int grad_tag, int rank, int size);
   void WaitAllMessages();
 };
 
