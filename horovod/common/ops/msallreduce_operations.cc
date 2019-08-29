@@ -190,23 +190,24 @@ static void InitComms(MPI_Comm global_comm) {
 template<typename T, typename F, typename S>
 void MsAllreduceOp::MsAllreduce_Internal(T* grad_buffer, T* recv_buffer, int buffer_length, MPI_Comm* node_comm, int layerid, TensorTableEntry entry, F dotProdFunc, S scaleAddFunc) {
   int count = buffer_length / sizeof(T);
-
-  if (reduction_comms == NULL) {
-    std::cerr << "initializing comms" << std::endl;
-    InitComms(*node_comm);	
+  int local_rank = 0;
+  if (node_comm == NULL) {
+    MPI_Comm_rank(global_state_->local_comm, &local_rank);
+    MPI_Datatype mpi_type = mpi_context_->GetMPIDataType(entry.tensor);
+    SyncLocalReduce(grad_buffer, recv_buffer, count, mpi_type, global_state_->local_comm, layerid, entry, dotProdFunc, scaleAddFunc);
+    if (local_rank == 0 && node_comm != NULL) {
+      LOG(INFO, global_state_->rank)<<"Begin vhdd reduce "<<" "<<std::this_thread::get_id();
+      SyncAllreduce(grad_buffer, recv_buffer, count, *node_comm, global_state_->reduction_comms, layerid, entry, dotProdFunc, scaleAddFunc);
+    }
+    SyncLocalBroadcast(grad_buffer, count, mpi_type, global_state_->local_comm, layerid);
+  } else {
+    if (reduction_comms == NULL) {
+      std::cerr << "initializing comms" << std::endl;
+      InitComms(*node_comm);	
+    }
+    
+    SyncAllreduce(grad_buffer, recv_buffer, count, *node_comm, reduction_comms, layerid, entry, dotProdFunc, scaleAddFunc);
   }
-
-  SyncAllreduce(grad_buffer, recv_buffer, count, *node_comm, reduction_comms, layerid, entry, dotProdFunc, scaleAddFunc);
-
-  // int local_rank = 0;
-  // MPI_Comm_rank(global_state_->local_comm, &local_rank);
-  // MPI_Datatype mpi_type = mpi_context_->GetMPIDataType(entry.tensor);
-  // SyncLocalReduce(grad_buffer, recv_buffer, count, mpi_type, global_state_->local_comm, layerid, entry, dotProdFunc, scaleAddFunc);
-  // if (local_rank == 0 && node_comm != NULL) {
-  //   LOG(INFO, global_state_->rank)<<"Begin vhdd reduce "<<" "<<std::this_thread::get_id();
-  //   SyncAllreduce(grad_buffer, recv_buffer, count, *node_comm, global_state_->reduction_comms, layerid, entry, dotProdFunc, scaleAddFunc);
-  // }
-  // SyncLocalBroadcast(grad_buffer, count, mpi_type, global_state_->local_comm, layerid);
 }
 
 template<typename T>
