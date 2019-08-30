@@ -32,17 +32,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 	} 
 }
 
-void PSLRingOpInit(Message* message, void* grad_buf, void* recv_buf, int count, DataType datatype, AllRings& all_rings, MPI_Comm comm, int grad_tag, int rank, int size){
-  // printf("ZZZZZ 1\n"); fflush(stdout);
-  // printf("ZZZZZ 2\n"); fflush(stdout);
-	// all_rings.InitMessageInRing(message, ring, (rank == (grad_tag % 8)), count, grad_buf, recv_buf, datatype, comm, grad_tag);
-  // printf("ZZZZZ 3\n"); fflush(stdout);
-}
-
-thread_local double* MsCudaRingAllreduceOp::device_normsq_memory_a;
-thread_local double* MsCudaRingAllreduceOp::device_normsq_memory_b;
-thread_local double* MsCudaRingAllreduceOp::device_dot_product_memory;
-
 MsCudaRingAllreduceOp::MsCudaRingAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context, HorovodGlobalState* global_state)
     : MsAllreduceOp(mpi_context, global_state), mpi_context_(mpi_context), cuda_context_(cuda_context) {
     }
@@ -76,36 +65,17 @@ void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid)
       cuda_context_->ErrorCheck("cudaStreamCreateWithPriority",
                                 cudaStreamCreateWithPriority(&device_stream, cudaStreamNonBlocking, greatest_priority));
 
-      cuda_context_->ErrorCheck("cudaMalloc",
-                                cudaMalloc(&device_normsq_memory_a, sizeof(double)));
-      cuda_context_->ErrorCheck("cudaMalloc",
-                                cudaMalloc(&device_normsq_memory_b, sizeof(double)));
-      cuda_context_->ErrorCheck("cudaMalloc",
-                                cudaMalloc(&device_dot_product_memory, sizeof(double)));
     }
   }
 }
 
-void MsCudaRingAllreduceOp::FinalizeCUDA() {
-		if (device_normsq_memory_a != nullptr){
-			cudaFree(device_normsq_memory_a);
-			cudaFree(device_normsq_memory_b);
-			cudaFree(device_dot_product_memory);
-      device_normsq_memory_a = nullptr;
-      device_normsq_memory_b = nullptr;
-      device_dot_product_memory = nullptr;
-		}
-}
-
 Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const Response& response) {
-  printf("TTTTTTTTTTT Running RingAllreduce\n"); std::fflush(stdout);
   if(entries.size() < 1) {
       return Status::OK();
   }
   //TODO how do we report statuses?
   std::map<int, Status> return_statuses;
   int num_reductions = entries.size();
-  printf("RRRRRRRRRRRR %d %d\n", global_state_->local_rank, global_state_->local_size); std::fflush(stdout);
 	AllRings all_rings(global_state_->local_rank, global_state_->local_size);
   std::deque<FusionBufferManager> used_buffer_managers;
   std::deque<void*> recv_buffers;
@@ -155,7 +125,6 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     // This will create a stream per layer.
     InitCUDA(entry, layerid);
     LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
-    printf("TTTTTTTTTTT1 Running RingAllreduce %p %p\n", entry.output, entry.tensor); std::fflush(stdout);
     all_rings.InitMessageInRing(new ReduceMessage(mpi_context_),
                       buffer_data,
                       recv_buffer,
@@ -163,19 +132,14 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
                       entry.tensor->dtype(),
                       global_state_->local_comm,
                       layerid,
-                      global_state_->local_rank,
-                      global_state_->local_size);
-    printf("TTTTTTTTTTT2 Running RingAllreduce\n"); std::fflush(stdout);
+                      global_state_->local_rank);
   }
-  printf("TTTTTTTTTTT3 Running RingAllreduce\n"); std::fflush(stdout);
   all_rings.WaitAllMessages();
-  printf("TTTTTTTTTTT4 Running RingAllreduce\n"); std::fflush(stdout);
   // Return used buffer managers to the queue
   buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
 
   int local_rank = 0;
   MPI_Comm_rank(global_state_->local_comm, &local_rank);
-  printf("TTTTTTTTTTT5 Running RingAllreduce\n"); std::fflush(stdout);
   if (local_rank == 0 && global_state_->rank_log_size != 0) {
     std::vector<std::unique_ptr<char[]>> allreduce_buffers;
 
@@ -210,7 +174,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
             SyncAllreduce(
               (uint16_t*) buffer_data,
               (uint16_t*) recv_buffer.get(),
-              buffer_len,
+              buffer_len / sizeof(uint16_t),
               *node_comm,
               global_state_->reduction_comms,
               layerid,
@@ -222,7 +186,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
             SyncAllreduce(
               (float*) buffer_data,
               (float*) recv_buffer.get(),
-              buffer_len, *node_comm,
+              buffer_len / sizeof(float),
+              *node_comm,
               global_state_->reduction_comms,
               layerid,
               entry,
@@ -233,7 +198,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
             SyncAllreduce(
               (double*) buffer_data,
               (double*) recv_buffer.get(),
-              buffer_len, *node_comm,
+              buffer_len / sizeof(double),
+              *node_comm,
               global_state_->reduction_comms,
               layerid,
               entry,
@@ -259,7 +225,6 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
       cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
     }
   }
-  printf("TTTTTTTTTTT6 Running RingAllreduce\n"); std::fflush(stdout);
 
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
@@ -273,10 +238,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     LOG(INFO, global_state_->rank)<<"Begin to process gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
   
     // This will create a stream per layer.
-    printf("TTTTTTTTTTT7 Running RingAllreduce\n"); std::fflush(stdout);
     InitCUDA(entry, layerid);
     LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
-    printf("TTTTTTTTTTT8 Running RingAllreduce\n"); std::fflush(stdout);
     all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
                       buffer_data,
                       nullptr,
@@ -284,12 +247,9 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
                       entry.output->dtype(),
                       global_state_->local_comm,
                       layerid,
-                      global_state_->local_rank,
-                      global_state_->local_size);
+                      global_state_->local_rank);
   }
-  printf("TTTTTTTTTTT9 Running RingAllreduce\n"); std::fflush(stdout);
   all_rings.WaitAllMessages();
-  printf("TTTTTTTTTTT10 Running RingAllreduce\n"); std::fflush(stdout);
 
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
@@ -297,8 +257,6 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
       memcpyUtil(entry, (void *) entry.output->data(), (void *) entry.tensor->data(), (size_t) entry.tensor->size(), layerid);
     }
   }
-	FinalizeCUDA();
-  printf("TTTTTTTTTTT11 %d Running RingAllreduce\n", global_state_->rank); std::fflush(stdout);
 
   return Status::OK();
 }
@@ -358,7 +316,6 @@ Message::Message(MPIContext* mpi_context)
 }
 
 void Message::InitMessage(Ring* _ring, int _rank, int _ring_starter_rank, int _count, void* _grad_buf, void* _recv_buf, DataType _datatype, MPI_Comm _comm, int _tag) {
-  printf("ZZZZZ 8\n"); fflush(stdout);
   comm = _comm;
   count = _count;
   tag = _tag;
@@ -369,9 +326,7 @@ void Message::InitMessage(Ring* _ring, int _rank, int _ring_starter_rank, int _c
   grad_buf = _grad_buf;
   recv_buf = _recv_buf;
   datatype = _datatype;
-  printf("ZZZZZ 9\n"); fflush(stdout);
   Start();
-  printf("ZZZZZ 10\n"); fflush(stdout);
 }
 
 AllreduceMessage::AllreduceMessage(MPIContext* mpi_context)
@@ -379,18 +334,15 @@ AllreduceMessage::AllreduceMessage(MPIContext* mpi_context)
 }
 
 void AllreduceMessage::Start() {
-  printf("Here0\n"); std::fflush(stdout);
   auto mpi_datatype = mpi_context->GetMPIDataType(datatype);
   if (rank == ring_starter_rank) {
     MPI_Isend(grad_buf, count, mpi_datatype, ring->nextGPU, tag, comm, &req);
   } else {
     MPI_Irecv(recv_buf, count, mpi_datatype, ring->prevGPU, tag, comm, &req);
   }
-  printf("Here1\n"); std::fflush(stdout);
 }
 
 bool AllreduceMessage::Test() {
-  printf("Here2\n"); std::fflush(stdout);
   auto mpi_datatype = mpi_context->GetMPIDataType(datatype);
 
   int flag;
@@ -410,13 +362,13 @@ bool AllreduceMessage::Test() {
         // call the cuda kernel
         switch(datatype) {
           case HOROVOD_FLOAT16:
-            MsCudaPairwiseReduce(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
+            MsCudaPairwiseReduce(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf);
             break;
           case HOROVOD_FLOAT32:
-            MsCudaPairwiseReduce(count, (float*)grad_buf, (float*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
+            MsCudaPairwiseReduce(count, (float*)grad_buf, (float*)recv_buf);
             break;
           case HOROVOD_FLOAT64:
-            MsCudaPairwiseReduce(count, (double*)grad_buf, (double*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
+            MsCudaPairwiseReduce(count, (double*)grad_buf, (double*)recv_buf);
             break;
           default:
             throw std::logic_error("Message::Test: Unsupported data type.");
@@ -437,7 +389,6 @@ bool AllreduceMessage::Test() {
       }
     }
   }
-  printf("Here3\n"); std::fflush(stdout);
 
   return false;
 }
@@ -447,7 +398,6 @@ ReduceMessage::ReduceMessage(MPIContext* mpi_context)
 }
 
 void ReduceMessage::Start() {
-  printf("Here0\n"); std::fflush(stdout);
 
   auto mpi_datatype = mpi_context->GetMPIDataType(datatype);
   if (rank == ring_starter_rank) {
@@ -455,11 +405,9 @@ void ReduceMessage::Start() {
   } else {
     MPI_Irecv(recv_buf, count, mpi_datatype, ring->prevGPU, tag, comm, &req);
   }
-  printf("Here1\n"); std::fflush(stdout);
 }
 
 bool ReduceMessage::Test() {
-  printf("Here2\n"); std::fflush(stdout);
   auto mpi_datatype = mpi_context->GetMPIDataType(datatype);
 
   int flag;
@@ -467,7 +415,6 @@ bool ReduceMessage::Test() {
     return true;
   MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
   if (flag == 1) {
-    printf("QQQQQQQQQQQQQQQQQ %d %d %d\n", leg, ring->prevGPU, ring->nextGPU); std::fflush(stdout);
     leg++;
     if (leg == 2) {
       ring->ReduceLoad(count);
@@ -480,13 +427,13 @@ bool ReduceMessage::Test() {
         // call the cuda kernel
         switch(datatype) {
           case HOROVOD_FLOAT16:
-            MsCudaPairwiseReduce(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
+            MsCudaPairwiseReduce(count, (uint16_t*)grad_buf, (uint16_t*)recv_buf);
             break;
           case HOROVOD_FLOAT32:
-            MsCudaPairwiseReduce(count, (float*)grad_buf, (float*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
+            MsCudaPairwiseReduce(count, (float*)grad_buf, (float*)recv_buf);
             break;
           case HOROVOD_FLOAT64:
-            MsCudaPairwiseReduce(count, (double*)grad_buf, (double*)recv_buf, MsCudaRingAllreduceOp::device_normsq_memory_a, MsCudaRingAllreduceOp::device_normsq_memory_b, MsCudaRingAllreduceOp::device_dot_product_memory);
+            MsCudaPairwiseReduce(count, (double*)grad_buf, (double*)recv_buf);
             break;
           default:
             throw std::logic_error("Message::Test: Unsupported data type.");
@@ -495,7 +442,6 @@ bool ReduceMessage::Test() {
       }
     }
   }
-  printf("Here3\n"); std::fflush(stdout);
   return false;
 }
 
@@ -583,14 +529,24 @@ Ring* AllRings::PickRing(int count) {
   return ret_ring;
 }
 
-void AllRings::InitMessageInRing(Message* message, void* grad_buf, void* recv_buf, int count, DataType datatype, MPI_Comm comm, int grad_tag, int rank, int size) {
-  printf("ZZZZZ 4\n"); fflush(stdout);
+void AllRings::InitMessageInRing(Message* message, void* grad_buf, void* recv_buf, int size, DataType datatype, MPI_Comm comm, int grad_tag, int rank) {
+  int count = -1;
+  switch(datatype) {
+    case HOROVOD_FLOAT16:
+      count = size / sizeof(uint16_t);
+      break;
+    case HOROVOD_FLOAT32:
+      count = size / sizeof(float);
+      break;
+    case HOROVOD_FLOAT64:
+      count = size / sizeof(double);
+      break;
+    default:
+      throw std::logic_error("AllRings::InitMessageInRing: Unsupported data type.");
+  }
   messages.push_back(message);
-  printf("ZZZZZ 5\n"); fflush(stdout);
 	Ring*	ring = PickRing(count);
-  printf("ZZZZZ 6\n"); fflush(stdout);
   message->InitMessage(ring, rank, grad_tag % 8, count, grad_buf, recv_buf, datatype, comm, grad_tag);
-  printf("ZZZZZ 7\n"); fflush(stdout);
 }
 
 void AllRings::WaitAllMessages() {

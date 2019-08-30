@@ -336,7 +336,7 @@ def get_mx_flags(build_ext, cpp_flags):
 
 
 def get_mpi_flags():
-    show_command = os.environ.get('HOROVOD_MPICXX_SHOW', '/usr/local/bin/mpicxx -show')
+    show_command = os.environ.get('HOROVOD_MPICXX_SHOW', 'mpicxx -show')
     try:
         mpi_show_output = subprocess.check_output(
             shlex.split(show_command), universal_newlines=True).strip()

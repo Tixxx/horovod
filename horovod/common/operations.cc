@@ -1027,13 +1027,11 @@ void BackgroundThreadLoop(HorovodGlobalState& state, MPIContext& ctx) {
 
   // parasail new algo begin
   // TODO make this a condition and merge with horovod's hiearchical allreduce
-printf("LLLLLLLLLLL %d\n", state.msallreduce_enabled);
 if(state.msallreduce_enabled == true) {
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &state.local_comm);
     int ms_local_rank, ms_local_size;
     MPI_Comm_size(state.local_comm, &ms_local_size);
     MPI_Comm_rank(state.local_comm, &ms_local_rank);
-    printf("LLLLLLLLLLL %d %d\n", ms_local_rank, ms_local_size);
     if (ms_local_rank == 0)
     {
         int rank, size;
@@ -1074,8 +1072,6 @@ if(state.msallreduce_enabled == true) {
     }
     // TODO parasail new algo end
   }
-
-  printf("OOOOOOOO %d\n", state.ranks.size());
 
   if (state.ranks.size() > 0) {
 
@@ -1120,7 +1116,6 @@ if(state.msallreduce_enabled == true) {
   int local_rank, local_size;
   MPI_Comm_rank(local_comm, &local_rank);
   MPI_Comm_size(local_comm, &local_size);
-  printf("UUUUUUUUUUUUUUUU %d %d global %d %d\n", local_rank, local_size, rank, size);
   std::vector<int> local_comm_ranks((size_t)local_size);
   local_comm_ranks[local_rank] = rank;
   MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, local_comm_ranks.data(), 1,
