@@ -250,7 +250,6 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
                       global_state_->local_rank);
   }
   all_rings.WaitAllMessages();
-
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
     if(entry.tensor->data() != entry.output->data()) {
@@ -493,22 +492,22 @@ AllRings::AllRings(int rank, int size) {
   rings = new Ring[num_rings];
   {
     // fat ring 1
-    int tmp[8] = {0, 1, 3, 2, 6, 7, 5, 4};
+    int tmp[8] = {0, 3, 2, 1, 5, 6, 7, 4};
     rings[0].InitRing(tmp, true, rank, size);
   }
   {
     // fat ring 2
-    int tmp[8] = {0, 4, 5, 7, 6, 2, 3, 1};
+    int tmp[8] = {0, 4, 7, 6, 5, 1, 2, 3};
     rings[1].InitRing(tmp, true, rank, size);
   }
   {
     // skinny ring 1
-    int tmp[8] = {0, 3, 7, 4, 6, 5, 1, 2};
+    int tmp[8] = {0, 2, 6, 4, 5, 7, 3, 1};
     rings[2].InitRing(tmp, false, rank, size);
   }
   {
     // skinny ring 2
-    int tmp[8] = {0, 2, 1, 5, 6, 4, 7, 3};
+    int tmp[8] = {0, 1, 3, 7, 5, 4, 6, 2};
     rings[3].InitRing(tmp, false, rank, size);
   }
 };
