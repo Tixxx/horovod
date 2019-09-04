@@ -81,8 +81,11 @@ class MPITests(tf.test.TestCase):
         size = hvd.size()
         
         all_tensors = []
-        for i in range(4):
-            all_tensors.append([np.asarray([[(1.0+i)*(i==0), (2.0+i)*(i==1)], [(3.0+i)*(i==2), (4.0+i)*(i==3)]]), np.asarray([[(5.0+i)*(i==0), (6.0+i)*(i==1)], [(7.0+i)*(i==2), (8.0+i)*(i==3)]])])
+        for i in range(8):
+            # all_tensors.append([np.asarray([[(1.0), (2.0)], [(3.0), (4.0)]]), np.asarray([[(5.0), (6.0)], [(7.0), (8.0)]])])
+            # all_tensors.append([np.asarray([[(1.0+i), (2.0+i)], [(3.0+i), (4.0+i)]]), np.asarray([[(5.0+i), (6.0+i)], [(7.0+i), (8.0+i)]])])
+            all_tensors.append([np.asarray([(1.0+i), (1.0+i)])])
+            # all_tensors.append([np.asarray([[(1.0+i)*(i==0), (2.0+i)*(i==1)], [(3.0+i)*(i==2), (4.0+i)*(i==3)]]), np.asarray([[(5.0+i)*(i==0), (6.0+i)*(i==1)], [(7.0+i)*(i==2), (8.0+i)*(i==3)]])])
 
 
         # rank0_tensors = [np.asarray([[1.0, 2.0], [3.0, 4.0]]), np.asarray([[9.0, 10.0], [11.0, 12.0]])]
@@ -91,10 +94,9 @@ class MPITests(tf.test.TestCase):
         # rank1_tensors = [np.asarray([[9.0, 10.0], [11.0, 12.0]])]
 
         expected = all_tensors[0]
-        for i in range(1,4):
+        for i in [3, 2, 1, 5, 6, 7, 4]:
             answer0 = parasail_reference_operation(expected[0], all_tensors[i][0])
-            answer1 = parasail_reference_operation(expected[1], all_tensors[i][1])
-            expected = [answer0, answer1]
+            expected = [answer0]
         rank_num = hvd.local_rank()
         for dtype in [tf.float32]:
             with tf.device("/gpu:{}".format(rank_num)):
