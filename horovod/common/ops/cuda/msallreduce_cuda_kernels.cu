@@ -45,6 +45,16 @@ void CudaScaleAddKernel(int count, T* a, const T* b, TACC a_coeff, TACC b_coeff)
 	}
 }
 
+template<typename T>
+__global__
+void ConvertToFloat(int count, T* a, float* b) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (count > index){
+		b[index] = (float) a[index];
+	}
+}
+
+
 void CudaDotProductImpl(int count, const double* device_a, const double* device_b, 
 	double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
 	
