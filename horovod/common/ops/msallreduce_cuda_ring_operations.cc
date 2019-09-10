@@ -144,36 +144,37 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     std::vector<std::unique_ptr<char[]>> allreduce_buffers;
 
     // start device to host copies
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto& entry = entries.at(layerid);
-      int buffer_len = entry.output->size();
-      allreduce_buffers.emplace_back(new char[buffer_len]);
-      char* buffer_data = allreduce_buffers.at(layerid).get();
+    // for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+    //   auto& entry = entries.at(layerid);
+    //   int buffer_len = entry.output->size();
+    //   allreduce_buffers.emplace_back(new char[buffer_len]);
+    //   char* buffer_data = allreduce_buffers.at(layerid).get();
       
-      auto cuda_result = cudaMemcpyAsync(
-        buffer_data, (void*) entry.tensor->data(),
-        buffer_len, 
-        cudaMemcpyDeviceToHost,
-        cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
-    }
+    //   auto cuda_result = cudaMemcpyAsync(
+    //     buffer_data, (void*) entry.tensor->data(),
+    //     buffer_len, 
+    //     cudaMemcpyDeviceToHost,
+    //     cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+    //   cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+    // }
 
     for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
       auto& entry = entries.at(layerid);
       int buffer_len = entry.output->size();
-      char* buffer_data = allreduce_buffers.at(layerid).get();
-      std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
-
+    //  char* buffer_data = allreduce_buffers.at(layerid).get();
+      void * buffer_data = (void *) entry.tensor->data();
+      //std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
+      void * recv_buffer = (void *) entry.output->data();
       // wait for this layer to finish copying to host
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+      // auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+      // cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
 
       MPI_Comm* node_comm = &global_state_->reduction_comms[global_state_->rank_log_size-1];
       switch (entry.output->dtype()) {
           case HOROVOD_FLOAT16:
             SyncAllreduce(
               (uint16_t*) buffer_data,
-              (uint16_t*) recv_buffer.get(),
+              (uint16_t*) recv_buffer,
               buffer_len / sizeof(uint16_t),
               *node_comm,
               global_state_->reduction_comms,
@@ -185,7 +186,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
           case HOROVOD_FLOAT32:
             SyncAllreduce(
               (float*) buffer_data,
-              (float*) recv_buffer.get(),
+              (float*) recv_buffer,
               buffer_len / sizeof(float),
               *node_comm,
               global_state_->reduction_comms,
@@ -197,7 +198,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
           case HOROVOD_FLOAT64:
             SyncAllreduce(
               (double*) buffer_data,
-              (double*) recv_buffer.get(),
+              (double*) recv_buffer,
               buffer_len / sizeof(double),
               *node_comm,
               global_state_->reduction_comms,
@@ -211,19 +212,19 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
       }
 
       // start the copy back to device
-      cuda_result = cudaMemcpyAsync(
-        (void*) entry.tensor->data(), buffer_data,
-        buffer_len, 
-        cudaMemcpyHostToDevice,
-        cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+      // cuda_result = cudaMemcpyAsync(
+      //   (void*) entry.tensor->data(), buffer_data,
+      //   buffer_len, 
+      //   cudaMemcpyHostToDevice,
+      //   cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+      // cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
     }
 
     // wait for all copies to device to finish
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
-    }
+    // for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+    //   auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+    //   cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+    // }
   }
 
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
