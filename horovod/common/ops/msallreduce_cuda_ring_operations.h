@@ -17,19 +17,17 @@
 #define HOROVOD_MSALLREDUCE_CUDA_RING_OPERATIONS_H
 
 #include <deque>
-#include <typeinfo>
 
-#include "msallreduce_operations.h"
-#include "cuda_operations.h"
-#include "cuda_fp16.h"
+#include "msallreduce_cuda_operations.h"
 
 namespace horovod {
 namespace common {
 
-class MsCudaRingAllreduceOp : public MsAllreduceOp {
+class MsCudaRingAllreduceOp : public MsCudaAllreduceOp {
   public:
   MsCudaRingAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context,
                 HorovodGlobalState* global_state);
+  ~MsCudaRingAllreduceOp();
 
   bool Enabled(const ParameterManager& param_manager,
                const std::vector<TensorTableEntry>& entries,
@@ -39,12 +37,9 @@ class MsCudaRingAllreduceOp : public MsAllreduceOp {
                  const Response& response) override;
 
   protected:
-  struct MPIContext* mpi_context_;
-  struct CUDAContext* cuda_context_;
   std::deque<FusionBufferManager> buffer_managers_;
 
-  void InitCUDA(const TensorTableEntry& entry, int layerid);
-  void memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) override;
+  void InitCUDA(const TensorTableEntry& entry, int layerid) override;
 };
 
 namespace msallreduce {

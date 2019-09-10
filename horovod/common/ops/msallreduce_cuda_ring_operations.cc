@@ -33,20 +33,25 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 MsCudaRingAllreduceOp::MsCudaRingAllreduceOp(MPIContext* mpi_context, CUDAContext* cuda_context, HorovodGlobalState* global_state)
-    : MsAllreduceOp(mpi_context, global_state), mpi_context_(mpi_context), cuda_context_(cuda_context) {
+    : MsCudaAllreduceOp(mpi_context, cuda_context, global_state) {
     }
 
+MsCudaRingAllreduceOp::~MsCudaRingAllreduceOp() {
+  FinalizeCUDA();
+}
+
 void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid) {
+  auto thread_id = std::this_thread::get_id();
   cuda_context_->ErrorCheck("cudaSetDevice", cudaSetDevice(entry.device));
 
-  LOG(INFO, global_state_->rank)<<"Checking for existing stream for layer "<<layerid<<" "<<std::this_thread::get_id();
+  LOG(INFO, global_state_->rank)<<"Checking for existing stream for layer "<<layerid;
   // Ensure stream is in the map before executing reduction.
   cudaStream_t& stream = cuda_context_->streams[global_state_->current_nccl_stream][layerid];
   if (stream == nullptr) {
 
     std::lock_guard<std::mutex> guard(global_state_->mutex);
     if (stream == nullptr) {
-      LOG(INFO, global_state_->rank)<<"Stream is null, creating new stream "<<std::this_thread::get_id();
+      LOG(INFO, global_state_->rank)<<"Stream is null, creating new stream "<<thread_id;
       int greatest_priority;
       cuda_context_->ErrorCheck("cudaDeviceGetStreamPriorityRange",
                                 cudaDeviceGetStreamPriorityRange(NULL, &greatest_priority));
@@ -57,15 +62,31 @@ void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid)
   cudaStream_t& device_stream = cuda_context_->streams[global_state_->current_nccl_stream][entry.device];
   if (device_stream == nullptr) {
     std::lock_guard<std::mutex> guard(global_state_->mutex);
-    if (device_stream == nullptr) {
-      LOG(INFO, global_state_->rank)<<"device Stream is null, creating new device stream "<<std::this_thread::get_id();
+    if (stream == nullptr) {
+      LOG(INFO, global_state_->rank)<<"device Stream is null, creating new device stream "<<thread_id;
       int greatest_priority;
       cuda_context_->ErrorCheck("cudaDeviceGetStreamPriorityRange",
                                 cudaDeviceGetStreamPriorityRange(NULL, &greatest_priority));
       cuda_context_->ErrorCheck("cudaStreamCreateWithPriority",
                                 cudaStreamCreateWithPriority(&device_stream, cudaStreamNonBlocking, greatest_priority));
-
     }
+  }
+  if (thread_to_device_variable_map.find(thread_id) == thread_to_device_variable_map.end() &&
+      thread_to_device_variable_map[thread_id][0] == nullptr)
+  {
+    double* device_normsq_memory_a;
+    double* device_normsq_memory_b;
+    double* device_dot_product_memory;
+    cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_normsq_memory_a, sizeof(double)));
+    cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_normsq_memory_b, sizeof(double)));
+    cuda_context_->ErrorCheck("cudaMalloc",
+                            cudaMalloc(&device_dot_product_memory, sizeof(double)));
+    std::lock_guard<std::mutex> guard(global_state_->mutex);
+    thread_to_device_variable_map[thread_id][0] = device_normsq_memory_a;
+    thread_to_device_variable_map[thread_id][1] = device_normsq_memory_b;
+    thread_to_device_variable_map[thread_id][2] = device_dot_product_memory;
   }
 }
 
@@ -180,8 +201,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
               global_state_->reduction_comms,
               layerid,
               entry,
-              ComputeDotAndNormSqrdsfp16,
-              ScaledAddfp16);
+              DotProductImpl<uint16_t>,
+              ScaleAddImpl<uint16_t>);
           break;
           case HOROVOD_FLOAT32:
             SyncAllreduce(
@@ -192,8 +213,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
               global_state_->reduction_comms,
               layerid,
               entry,
-              ComputeDotAndNormSqrds<float>,
-              ScaledAdd<float>);
+              DotProductImpl<float>,
+              ScaleAddImpl<float>);
           break;
           case HOROVOD_FLOAT64:
             SyncAllreduce(
@@ -204,8 +225,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
               global_state_->reduction_comms,
               layerid,
               entry,
-              ComputeDotAndNormSqrds<double>,
-              ScaledAdd<double>);
+              DotProductImpl<double>,
+              ScaleAddImpl<double>);
           break;
           default:
             throw std::logic_error("MsAllreduceOp::Execute: Unsupported data type.");
@@ -259,19 +280,6 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
   }
 
   return Status::OK();
-}
-
-void MsCudaRingAllreduceOp::memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) {
-    assert(dest != nullptr);
-    assert(src != nullptr);
-    LOG(INFO, global_state_->rank)<<"memcpyUtil GPU. "<<std::this_thread::get_id();
-    auto cuda_result = cudaMemcpyAsync(dest, src,
-                                    buffer_len, 
-                                    cudaMemcpyDeviceToDevice,
-                                    cuda_context_->streams[global_state_->current_nccl_stream][entry.device]);
-    cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
-    auto cuda_sync_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][entry.device]);
-    cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_sync_result);
 }
 
 bool MsCudaRingAllreduceOp::Enabled(const ParameterManager& param_manager,

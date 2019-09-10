@@ -46,7 +46,7 @@ class MsCudaAllreduceOp : public MsAllreduceOp {
   // 3: dotproduct
   static std::unordered_map<std::thread::id, std::array<double*, 3>> thread_to_device_variable_map;
 
-  void InitCUDA(const TensorTableEntry& entry, int layerid);
+  void virtual InitCUDA(const TensorTableEntry& entry, int layerid);
 
   void FinalizeCUDA();
 
