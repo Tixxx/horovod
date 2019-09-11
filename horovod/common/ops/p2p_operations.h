@@ -42,12 +42,91 @@ public:
 
 protected:
   MPIContext* mpi_context_;
+
+  template<typename T>
+  void MpiP2pAllreduce(T *grad_buffer, T *recv_buffer, int64_t buffer_length, MPI_Comm communicator, int message_tag) {
+    int true_rank;
+    int redn_rank;
+    int size;
+    MPI_Comm_rank(communicator, &true_rank);
+    MPI_Comm_size(communicator, &size);
+
+    static bool opt_permute_roots_on_allreduce = false;
+    int root_node_rotation = opt_permute_roots_on_allreduce ? (message_tag % size) : 0;
+    redn_rank = (true_rank ^ root_node_rotation);
+    
+    int count = buffer_length/sizeof(T);
+    assert(!(grad_buffer <= recv_buffer && recv_buffer < grad_buffer + count) || (recv_buffer <= grad_buffer && grad_buffer < recv_buffer + count));
+
+    // Do a tree reduction
+    // The reduction ranks used are a permutation of true ranks (permuted based on message_tag)
+    // This spreads the load of tree reduction across different true ranks
+
+    // at each level l, node X0[0..0] receives from X1[0...],
+    // where [0..0] is l zeros in the bit representation of the rank of a node
+
+    int level;
+    for (level = 1; level < size; level *= 2) {
+    int neighbor_redn_rank = redn_rank ^ level;
+    int neighbor_true_rank = (neighbor_redn_rank ^ root_node_rotation);
+    if (redn_rank % level != 0)
+    continue; // stay idle at this level
+
+    if (neighbor_redn_rank >= size)
+    continue; // no neighbor and so stay idle at this level
+
+    if ((redn_rank & level) == 0) {
+    // recv buffer from neighbor
+    PointToPointRecv(recv_buffer, buffer_length, neighbor_true_rank, message_tag, communicator);
+
+    // do reduction
+    for(int i = 0; i < count; i++) {
+    grad_buffer[i] += recv_buffer[i];
+    }
+    }
+    else {
+    // send grad_buffer to neighbor
+    PointToPointSend(grad_buffer, buffer_length, neighbor_true_rank, message_tag, communicator);
+    }
+    }
+
+    // Do a inverse tree to do a broadcast
+    // cannot use MPI Broadcast as there can be concurrent Allreduces happening in parallel
+
+    // the same logic as above.
+    // at each level l, node X0[0..0] sends to X1[0...],
+    // where [0..0] is l zeros in the bit representation of the rank of a node
+
+    level /= 2; // this make sure that level < size
+
+    for (; level > 0; level /= 2) {
+      int neighbor_redn_rank = redn_rank ^ level;
+      int neighbor_true_rank = (neighbor_redn_rank ^ root_node_rotation);
+
+      if (redn_rank % level != 0)
+      continue; // stay idle at this level
+
+      if (neighbor_redn_rank >= size)
+      continue; // no neighbor and so stay idle at this level
+
+      if ((redn_rank & level) == 0) {
+      // send grad_buffer to neighbor
+      // and dont wait for the send to finish
+      PointToPointSend(grad_buffer, buffer_length, neighbor_true_rank, message_tag, communicator);
+      }
+      else {
+      // recv grad_buffer from neighbor
+      PointToPointRecv(grad_buffer, buffer_length, neighbor_true_rank, message_tag, communicator);
+      }
+    }
+  }
+
   template<class T>
   void PointToPointSend(T* input_data_buffer,
                         int64_t buffer_length,
                         int dest_rank,
                         int tag,
-                        Communicator communicator) {
+                        MPI_Comm communicator) {
     int status;                       
     if (!global_state_->msg_chunk_enabled) {
         LOG(INFO, global_state_->rank)<<std::this_thread::get_id()<<" begin p2p send for tag: "<<tag;
@@ -56,7 +135,7 @@ protected:
                           MPI_CHAR,
                           dest_rank,
                           tag,
-                          mpi_context_->GetMPICommunicator(communicator));
+                          communicator);
         LOG(INFO, global_state_->rank)<<std::this_thread::get_id()<<" end p2p send for tag: "<<tag;
 
     }
@@ -68,7 +147,7 @@ protected:
                               MPI_CHAR,
                               dest_rank,
                               tag,
-                              mpi_context_->GetMPICommunicator(communicator));
+                              communicator);
             status &= status;
           }
     }
@@ -83,7 +162,7 @@ protected:
                         int64_t buffer_length,
                         int src_rank,
                         int tag,
-                        Communicator communicator) {
+                        MPI_Comm communicator) {
     int status;
     if (!global_state_->msg_chunk_enabled) {
         LOG(INFO, global_state_->rank)<<std::this_thread::get_id()<<" begin p2p recv for tag: "<<tag;
@@ -92,7 +171,7 @@ protected:
                           MPI_CHAR,
                           src_rank,
                           tag,
-                          mpi_context_->GetMPICommunicator(communicator),
+                          communicator,
                           MPI_STATUS_IGNORE);
         LOG(INFO, global_state_->rank)<<std::this_thread::get_id()<<" end p2p recv for tag: "<<tag;
     }
@@ -104,7 +183,7 @@ protected:
                               MPI_CHAR,
                               src_rank,
                               tag,
-                              mpi_context_->GetMPICommunicator(communicator),
+                              communicator,
                               MPI_STATUS_IGNORE);
             status &= status;
           }
