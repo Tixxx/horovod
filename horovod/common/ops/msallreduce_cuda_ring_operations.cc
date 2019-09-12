@@ -16,6 +16,7 @@
 
 #include "msallreduce_cuda_ring_operations.h"
 #include "msallreduce_cuda_kernels.h"
+#include <vector>
 
 namespace horovod {
 namespace common {
@@ -138,7 +139,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
   // Return used buffer managers to the queue
   buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
 
-  int local_rank = 0;
+/*  int local_rank = 0;
   MPI_Comm_rank(global_state_->local_comm, &local_rank);
   if (local_rank == 0 && global_state_->rank_log_size != 0) {
     std::vector<std::unique_ptr<char[]>> allreduce_buffers;
@@ -224,7 +225,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
       auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
       cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
     }
-  }
+  }*/
 
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
@@ -407,6 +408,7 @@ void ReduceMessage::Start() {
 }
 
 bool ReduceMessage::Test() {
+  static std::vector<char> host_mem;
   auto mpi_datatype = mpi_context->GetMPIDataType(datatype);
 
   int flag;
@@ -416,12 +418,34 @@ bool ReduceMessage::Test() {
   if (flag == 1) {
     leg++;
     if (leg == 2) {
-      ring->ReduceLoad(count);
-      return true;
+      if (ring->nextGPU != ring_starter_rank){
+        ring->ReduceLoad(count);
+        return true;
+      } else {
+        if (host_mem.size() < count * sizeof(mpi_datatype)){
+          host_mem.resize(count * sizeof(mpi_datatype));
+        }
+        cudaMemcpy(host_mem, grad_buf, count*sizeof(mpi_datatype), cudaMemcpyDeviceToHost);
+        int global_rank = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &global_rank);
+        if (global_rank < 8){
+          MPI_Isend(host_mem.data(), count, mpi_datatype, (global_rank + 8) % 16, tag, MPI_COMM_WORLD, &req);
+        } else {
+          MPI_Irecv(host_mem.data(), count, mpi_datatype, (global_rank + 8) % 16, tag, MPI_COMM_WORLD, &req);
+        }
+      }
     }
+    if (leg == 3){
+      if (ring->nextGPU == ring_starter_rank){
+        cudaMemcpy(grad_buf, host_mem, count*sizeof(mpi_datatype), cudaMemcpyHostToDevice);
+        ring->ReduceLoad(count);
+        return true;
+      }      
+    }
+
     if (leg == 1) {
       if (rank == ring_starter_rank) {
-        MPI_Irecv(grad_buf, count, mpi_datatype, ring->prevGPU, tag, comm, &req);
+        //MPI_Irecv(grad_buf, count, mpi_datatype, ring->prevGPU, tag, comm, &req);
       } else {
         // call the cuda kernel
         switch(datatype) {
@@ -437,7 +461,8 @@ bool ReduceMessage::Test() {
           default:
             throw std::logic_error("Message::Test: Unsupported data type.");
         }
-        MPI_Isend(grad_buf, count, mpi_datatype, ring->nextGPU, tag, comm, &req);
+        if (ring->nextGPU != ring_starter_rank)
+          MPI_Isend(grad_buf, count, mpi_datatype, ring->nextGPU, tag, comm, &req);
       }
     }
   }
