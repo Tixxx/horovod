@@ -137,93 +137,97 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
   all_rings.WaitAllMessages();
   // Return used buffer managers to the queue
   buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
-
+ 
   int local_rank = 0;
   MPI_Comm_rank(global_state_->local_comm, &local_rank);
   if (local_rank == 0 && global_state_->rank_log_size != 0) {
-    std::vector<std::unique_ptr<char[]>> allreduce_buffers;
+    boost::asio::post(*global_state_->background_thread_pool,
+    [this,&entries]
+    {
+      std::vector<std::unique_ptr<char[]>> allreduce_buffers;
 
-    // start device to host copies
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto& entry = entries.at(layerid);
-      int buffer_len = entry.output->size();
-      allreduce_buffers.emplace_back(new char[buffer_len]);
-      char* buffer_data = allreduce_buffers.at(layerid).get();
-      
-      auto cuda_result = cudaMemcpyAsync(
-        buffer_data, (void*) entry.tensor->data(),
-        buffer_len, 
-        cudaMemcpyDeviceToHost,
-        cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
-    }
-
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto& entry = entries.at(layerid);
-      int buffer_len = entry.output->size();
-      char* buffer_data = allreduce_buffers.at(layerid).get();
-      std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
-
-      // wait for this layer to finish copying to host
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
-
-      MPI_Comm* node_comm = &global_state_->reduction_comms[global_state_->rank_log_size-1];
-      switch (entry.output->dtype()) {
-          case HOROVOD_FLOAT16:
-            SyncAllreduce(
-              (uint16_t*) buffer_data,
-              (uint16_t*) recv_buffer.get(),
-              buffer_len / sizeof(uint16_t),
-              *node_comm,
-              global_state_->reduction_comms,
-              layerid,
-              entry,
-              ComputeDotAndNormSqrdsfp16,
-              ScaledAddfp16);
-          break;
-          case HOROVOD_FLOAT32:
-            SyncAllreduce(
-              (float*) buffer_data,
-              (float*) recv_buffer.get(),
-              buffer_len / sizeof(float),
-              *node_comm,
-              global_state_->reduction_comms,
-              layerid,
-              entry,
-              ComputeDotAndNormSqrds<float>,
-              ScaledAdd<float>);
-          break;
-          case HOROVOD_FLOAT64:
-            SyncAllreduce(
-              (double*) buffer_data,
-              (double*) recv_buffer.get(),
-              buffer_len / sizeof(double),
-              *node_comm,
-              global_state_->reduction_comms,
-              layerid,
-              entry,
-              ComputeDotAndNormSqrds<double>,
-              ScaledAdd<double>);
-          break;
-          default:
-            throw std::logic_error("MsAllreduceOp::Execute: Unsupported data type.");
+      // start device to host copies
+      for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+        auto& entry = entries.at(layerid);
+        int buffer_len = entry.output->size();
+        allreduce_buffers.emplace_back(new char[buffer_len]);
+        char* buffer_data = allreduce_buffers.at(layerid).get();
+        
+        auto cuda_result = cudaMemcpyAsync(
+          buffer_data, (void*) entry.tensor->data(),
+          buffer_len, 
+          cudaMemcpyDeviceToHost,
+          cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+        cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
       }
 
-      // start the copy back to device
-      cuda_result = cudaMemcpyAsync(
-        (void*) entry.tensor->data(), buffer_data,
-        buffer_len, 
-        cudaMemcpyHostToDevice,
-        cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
-    }
+      for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+        auto& entry = entries.at(layerid);
+        int buffer_len = entry.output->size();
+        char* buffer_data = allreduce_buffers.at(layerid).get();
+        std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
 
-    // wait for all copies to device to finish
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
-    }
+        // wait for this layer to finish copying to host
+        auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+        cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+
+        MPI_Comm* node_comm = &global_state_->reduction_comms[global_state_->rank_log_size-1];
+        switch (entry.output->dtype()) {
+            case HOROVOD_FLOAT16:
+              SyncAllreduce(
+                (uint16_t*) buffer_data,
+                (uint16_t*) recv_buffer.get(),
+                buffer_len / sizeof(uint16_t),
+                *node_comm,
+                global_state_->reduction_comms,
+                layerid,
+                entry,
+                ComputeDotAndNormSqrdsfp16,
+                ScaledAddfp16);
+            break;
+            case HOROVOD_FLOAT32:
+              SyncAllreduce(
+                (float*) buffer_data,
+                (float*) recv_buffer.get(),
+                buffer_len / sizeof(float),
+                *node_comm,
+                global_state_->reduction_comms,
+                layerid,
+                entry,
+                ComputeDotAndNormSqrds<float>,
+                ScaledAdd<float>);
+            break;
+            case HOROVOD_FLOAT64:
+              SyncAllreduce(
+                (double*) buffer_data,
+                (double*) recv_buffer.get(),
+                buffer_len / sizeof(double),
+                *node_comm,
+                global_state_->reduction_comms,
+                layerid,
+                entry,
+                ComputeDotAndNormSqrds<double>,
+                ScaledAdd<double>);
+            break;
+            default:
+              throw std::logic_error("MsAllreduceOp::Execute: Unsupported data type.");
+        }
+
+        // start the copy back to device
+        cuda_result = cudaMemcpyAsync(
+          (void*) entry.tensor->data(), buffer_data,
+          buffer_len, 
+          cudaMemcpyHostToDevice,
+          cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+        cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+      }
+
+      // wait for all copies to device to finish
+      for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+        auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
+        cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+      }
+    });
   }
 
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
@@ -238,7 +242,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     LOG(INFO, global_state_->rank)<<"Begin to process gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
   
     // This will create a stream per layer.
-    InitCUDA(entry, layerid);
+    //InitCUDA(entry, layerid);
     LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
     all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
                       buffer_data,

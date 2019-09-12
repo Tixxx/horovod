@@ -28,6 +28,7 @@
 #include "../global_state.h"
 #include "../mpi_context.h"
 #include "p2p_operations.h"
+#include <boost/asio/post.hpp>
 
 
 namespace horovod {

@@ -15,7 +15,6 @@
 // =============================================================================
 
 #include "msallreduce_operations.h"
-#include <boost/asio/post.hpp>
 
 namespace horovod {
 namespace common {
