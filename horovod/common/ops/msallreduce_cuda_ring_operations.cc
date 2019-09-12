@@ -145,7 +145,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
   if (local_rank == 0 && global_state_->rank_log_size != 0) {
     should_broadcast = false;
     boost::asio::post(*global_state_->background_thread_pool,
-    [this,&entries,&should_broadcast,&all_rings]
+    [this,&entries,&should_broadcast]
     {
       LOG(INFO, global_state_->rank)<<"Begin vhdd"<<" "<<std::this_thread::get_id();
       std::vector<std::unique_ptr<char[]>> allreduce_buffers;
@@ -235,41 +235,41 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
         cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
       }
       LOG(INFO, global_state_->rank)<<"Tensors copied back to device"<<" "<<std::this_thread::get_id();
-      for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-        auto& entry = entries.at(layerid);
-        void* buffer_data;
-        int buffer_len;
-
-        buffer_data = (void*) entry.tensor->data();
-
-        buffer_len = entry.output->size();
-
-        LOG(INFO, global_state_->rank)<<"Begin to process gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
-      
-        // This will create a stream per layer.
-        //InitCUDA(entry, layerid);
-        LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
-        all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
-                          buffer_data,
-                          nullptr,
-                          buffer_len,
-                          entry.output->dtype(),
-                          global_state_->local_comm,
-                          layerid,
-                          global_state_->local_rank);
-      }
-      all_rings.WaitAllMessages();
-      for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-        auto& entry = entries.at(layerid);
-        if(entry.tensor->data() != entry.output->data()) {
-          memcpyUtil(entry, (void *) entry.output->data(), (void *) entry.tensor->data(), (size_t) entry.tensor->size(), layerid);
-        }
-      }
       should_broadcast = true;
     });
   }
   while (should_broadcast != true) {
     std::this_thread::sleep_for(std::chrono::nanoseconds(25));
+  }
+  for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+    auto& entry = entries.at(layerid);
+    void* buffer_data;
+    int buffer_len;
+
+    buffer_data = (void*) entry.tensor->data();
+
+    buffer_len = entry.output->size();
+
+    LOG(INFO, global_state_->rank)<<"Begin to process gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
+  
+    // This will create a stream per layer.
+    //InitCUDA(entry, layerid);
+    LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
+    all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
+                      buffer_data,
+                      nullptr,
+                      buffer_len,
+                      entry.output->dtype(),
+                      global_state_->local_comm,
+                      layerid,
+                      global_state_->local_rank);
+  }
+  all_rings.WaitAllMessages();
+  for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+    auto& entry = entries.at(layerid);
+    if(entry.tensor->data() != entry.output->data()) {
+      memcpyUtil(entry, (void *) entry.output->data(), (void *) entry.tensor->data(), (size_t) entry.tensor->size(), layerid);
+    }
   }
 
   return Status::OK();
