@@ -425,7 +425,7 @@ bool ReduceMessage::Test() {
         if (host_mem.size() < count * sizeof(mpi_datatype)){
           host_mem.resize(count * sizeof(mpi_datatype));
         }
-        cudaMemcpy(host_mem, grad_buf, count*sizeof(mpi_datatype), cudaMemcpyDeviceToHost);
+        cudaMemcpy(host_mem.data(), grad_buf, count*sizeof(mpi_datatype), cudaMemcpyDeviceToHost);
         int global_rank = 0;
         MPI_Comm_rank(MPI_COMM_WORLD, &global_rank);
         if (global_rank < 8){
@@ -437,7 +437,7 @@ bool ReduceMessage::Test() {
     }
     if (leg == 3){
       if (ring->nextGPU == ring_starter_rank){
-        cudaMemcpy(grad_buf, host_mem, count*sizeof(mpi_datatype), cudaMemcpyHostToDevice);
+        cudaMemcpy(grad_buf, host_mem.data(), count*sizeof(mpi_datatype), cudaMemcpyHostToDevice);
         ring->ReduceLoad(count);
         return true;
       }      
