@@ -135,15 +135,19 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
                       global_state_->local_rank);
   }
   all_rings.WaitAllMessages();
+  LOG(INFO, global_state_->rank)<<"All messages are done "<<" "<<std::this_thread::get_id();
   // Return used buffer managers to the queue
   buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
  
   int local_rank = 0;
+  bool should_broadcast = true;
   MPI_Comm_rank(global_state_->local_comm, &local_rank);
   if (local_rank == 0 && global_state_->rank_log_size != 0) {
+    should_broadcast = false;
     boost::asio::post(*global_state_->background_thread_pool,
-    [this,&entries]
+    [this,&entries,&should_broadcast]
     {
+      LOG(INFO, global_state_->rank)<<"Begin vhdd"<<" "<<std::this_thread::get_id();
       std::vector<std::unique_ptr<char[]>> allreduce_buffers;
 
       // start device to host copies
@@ -160,6 +164,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
           cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
         cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
       }
+      LOG(INFO, global_state_->rank)<<"Finished dispatching cudamemcopyasync"<<" "<<std::this_thread::get_id();
 
       for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
         auto& entry = entries.at(layerid);
@@ -212,6 +217,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
             default:
               throw std::logic_error("MsAllreduceOp::Execute: Unsupported data type.");
         }
+      LOG(INFO, global_state_->rank)<<"Finished syncAllreduce"<<" "<<std::this_thread::get_id();
 
         // start the copy back to device
         cuda_result = cudaMemcpyAsync(
@@ -221,15 +227,20 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
           cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
         cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
       }
+      LOG(INFO, global_state_->rank)<<"Cudamemcpy to device dispatched"<<" "<<std::this_thread::get_id();
 
       // wait for all copies to device to finish
       for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
         auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
         cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
       }
+      LOG(INFO, global_state_->rank)<<"Tensors copied back to device"<<" "<<std::this_thread::get_id();
+      should_broadcast = true;
     });
   }
-
+  while (should_broadcast != true) {
+    std::this_thread::sleep_for(std::chrono::nanoseconds(25));
+  }
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
     void* buffer_data;
