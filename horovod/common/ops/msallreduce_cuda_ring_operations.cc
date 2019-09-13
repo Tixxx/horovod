@@ -16,6 +16,7 @@
 
 #include "msallreduce_cuda_ring_operations.h"
 #include "msallreduce_cuda_kernels.h"
+#include <iostream>
 
 namespace horovod {
 namespace common {
@@ -585,6 +586,7 @@ void AllRings::InitMessageInRing(Message* message, void* grad_buf, void* recv_bu
 void AllRings::WaitAllMessages() {
   
   bool all_done = false;
+  std::cout<<"***size of messages "<<messages.size()<<std::endl;
   while (!all_done) {
     all_done = true;
     for (auto& message : messages) {
