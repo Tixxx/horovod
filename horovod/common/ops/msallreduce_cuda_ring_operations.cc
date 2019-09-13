@@ -253,12 +253,11 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     }
     elements_left -= increment_count;
   }
-
+  LOG(INFO, global_state_->rank)<<"Waiting for reductions to be done. curret value: "<<global_state_->finished_parallel_reductions.load();
   // wait for all vhdd to finish
   while (global_state_->finished_parallel_reductions.load() < num_reductions) {
     std::this_thread::sleep_for(std::chrono::nanoseconds(25));
   }
-  MPI_Barrier(mpi_context_->GetMPICommunicator(Communicator::GLOBAL));
   //ring broadcast
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
@@ -269,11 +268,11 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
 
     buffer_len = entry.output->size();
 
-    LOG(INFO, global_state_->rank)<<"Begin to process gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
+    LOG(INFO, global_state_->rank)<<"Begin to broadcast gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
   
     // This will create a stream per layer.
     //InitCUDA(entry, layerid);
-    LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
+    LOG(INFO, global_state_->rank)<<"Begin broadcast gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
     all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
                       buffer_data,
                       nullptr,

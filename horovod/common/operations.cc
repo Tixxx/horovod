@@ -1931,7 +1931,6 @@ Status EnqueueTensorAllreduce(std::shared_ptr<OpContext> context,
   message.set_tensor_type(tensor->dtype());
   message.set_device(device);
   if (allreduce_type == AllreduceType::MS_ALLREDUCE) {
-    LOG(INFO, "Queued up an msallreduce request");
     message.set_request_type(Request::MSALLREDUCE);
   } else {
     message.set_request_type(Request::ALLREDUCE);
