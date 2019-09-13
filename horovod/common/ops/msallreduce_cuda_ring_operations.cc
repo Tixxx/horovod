@@ -88,7 +88,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     size_t increment_count = std::min(unroll_size, elements_left);
     size_t start_index = layerid;
     //enqueue messages
-    for (; layerid < layerid + increment_count; ++layerid) {
+    for (; layerid < start_index + increment_count; ++layerid) {
       auto& entry = entries.at(layerid);
       void* buffer_data;
       int buffer_len;
