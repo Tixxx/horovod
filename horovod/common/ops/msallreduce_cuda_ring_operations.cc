@@ -134,7 +134,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
       // This will create a stream per inner layer.
       InitCUDA(entry, layerid);
       LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
-      all_rings.InitMessageInRing(new ReduceMessage(mpi_context_),
+      all_rings.InitMessageInRing(new ReduceMessage(mpi_context_, global_state_),
                         buffer_data,
                         recv_buffer,
                         buffer_len,
@@ -274,7 +274,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     // This will create a stream per layer.
     //InitCUDA(entry, layerid);
     LOG(INFO, global_state_->rank)<<"Begin broadcast gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
-    all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
+    all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_, global_state_),
                       buffer_data,
                       nullptr,
                       buffer_len,
@@ -345,8 +345,8 @@ void Ring::ReduceLoad(int message_len) {
   load -= message_len;
 }
 
-Message::Message(MPIContext* mpi_context)
-  : mpi_context(mpi_context) {
+Message::Message(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : mpi_context(mpi_context), global_state(global_state) {
 }
 
 void Message::InitMessage(Ring* _ring, int _rank, int _ring_starter_rank, int _count, void* _grad_buf, void* _recv_buf, DataType _datatype, MPI_Comm _comm, int _tag) {
@@ -363,8 +363,8 @@ void Message::InitMessage(Ring* _ring, int _rank, int _ring_starter_rank, int _c
   Start();
 }
 
-AllreduceMessage::AllreduceMessage(MPIContext* mpi_context)
-  : Message(mpi_context) {
+AllreduceMessage::AllreduceMessage(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : Message(mpi_context, global_state) {
 }
 
 void AllreduceMessage::Start() {
@@ -427,8 +427,8 @@ bool AllreduceMessage::Test() {
   return false;
 }
 
-ReduceMessage::ReduceMessage(MPIContext* mpi_context)
-  : Message(mpi_context) {
+ReduceMessage::ReduceMessage(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : Message(mpi_context, global_state) {
 }
 
 void ReduceMessage::Start() {
@@ -479,8 +479,8 @@ bool ReduceMessage::Test() {
   return false;
 }
 
-BroadcastMessage::BroadcastMessage(MPIContext* mpi_context)
-  : Message(mpi_context) {
+BroadcastMessage::BroadcastMessage(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : Message(mpi_context, global_state) {
 }
 
 void BroadcastMessage::Start() {
@@ -586,7 +586,8 @@ void AllRings::InitMessageInRing(Message* message, void* grad_buf, void* recv_bu
 void AllRings::WaitAllMessages() {
   
   bool all_done = false;
-  std::cout<<"***size of messages "<<messages.size()<<std::endl;
+  int rank = messages.front()->global_state->rank;
+  LOG(INFO,rank)<<"***size of messages "<<messages.size();
   while (!all_done) {
     all_done = true;
     for (auto& message : messages) {
@@ -594,9 +595,11 @@ void AllRings::WaitAllMessages() {
         all_done = false;
     }
   }
+  LOG(INFO,rank)<<"deleting each message";
   for (int i = 0; i < messages.size(); i++)
     delete messages[i];
   messages.clear();
+  LOG(INFO,rank)<<"deleting each message";
 }
 
 }
