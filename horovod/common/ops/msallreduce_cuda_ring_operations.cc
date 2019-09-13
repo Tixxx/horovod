@@ -258,7 +258,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
   while (global_state_->finished_parallel_reductions.load() < num_reductions) {
     std::this_thread::sleep_for(std::chrono::nanoseconds(25));
   }
-
+  MPI_Barrier(mpi_context_->GetMPICommunicator(Communicator::GLOBAL));
   //ring broadcast
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
