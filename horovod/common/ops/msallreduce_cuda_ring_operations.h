@@ -18,6 +18,7 @@
 
 #include <deque>
 #include <typeinfo>
+#include <vector>
 
 #include "msallreduce_operations.h"
 #include "cuda_operations.h"

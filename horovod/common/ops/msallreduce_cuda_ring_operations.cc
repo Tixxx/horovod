@@ -137,7 +137,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
   }
   all_rings.WaitAllMessages();
   // Return used buffer managers to the queue
-  buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
+  //buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
 
 /*  int local_rank = 0;
   MPI_Comm_rank(global_state_->local_comm, &local_rank);
@@ -407,12 +407,11 @@ void ReduceMessage::Start() {
   }
 }
 
+// static std::vector<char> host_mem;
 bool ReduceMessage::Test() {
-  static std::vector<char> host_mem;
   auto mpi_datatype = mpi_context->GetMPIDataType(datatype);
-
   int flag;
-  if (leg == 2)
+  if (leg == 3 || (leg == 2 && ring->nextGPU != ring_starter_rank))
     return true;
   MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
   if (flag == 1) {
@@ -422,22 +421,33 @@ bool ReduceMessage::Test() {
         ring->ReduceLoad(count);
         return true;
       } else {
-        if (host_mem.size() < count * sizeof(mpi_datatype)){
-          host_mem.resize(count * sizeof(mpi_datatype));
-        }
-        cudaMemcpy(host_mem.data(), grad_buf, count*sizeof(mpi_datatype), cudaMemcpyDeviceToHost);
+        int datatype_size = mpi_context->GetMPITypeSize(datatype);
+        // if (host_mem.size() < count * datatype_size){
+        //   host_mem.resize(count * datatype_size);
+        //   printf("QQQQQQQQQ Resized\n"); fflush(stdout);
+        // }
+        
+        //cudaMemcpy(host_mem.data(), grad_buf, count*datatype_size, cudaMemcpyDeviceToHost);
         int global_rank = 0;
         MPI_Comm_rank(MPI_COMM_WORLD, &global_rank);
         if (global_rank < 8){
-          MPI_Isend(host_mem.data(), count, mpi_datatype, (global_rank + 8) % 16, tag, MPI_COMM_WORLD, &req);
+          MPI_Isend(grad_buf, count, mpi_datatype, (global_rank + 8) % 16, tag, MPI_COMM_WORLD, &req);
         } else {
-          MPI_Irecv(host_mem.data(), count, mpi_datatype, (global_rank + 8) % 16, tag, MPI_COMM_WORLD, &req);
+          MPI_Irecv(recv_buf, count, mpi_datatype, (global_rank + 8) % 16, tag, MPI_COMM_WORLD, &req);
         }
+        
+        return true;
       }
     }
     if (leg == 3){
       if (ring->nextGPU == ring_starter_rank){
-        cudaMemcpy(grad_buf, host_mem.data(), count*sizeof(mpi_datatype), cudaMemcpyHostToDevice);
+         int datatype_size = mpi_context->GetMPITypeSize(datatype);
+        // if (host_mem.size() < count * datatype_size){
+        //   host_mem.resize(count * datatype_size);
+        //   printf("TTTTTTTTT Resized\n"); fflush(stdout);
+        // }
+
+/*        cudaMemcpy(grad_buf, host_mem.data(), count*datatype_size, cudaMemcpyHostToDevice);*/
         ring->ReduceLoad(count);
         return true;
       }      
