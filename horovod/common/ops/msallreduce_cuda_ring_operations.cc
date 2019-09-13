@@ -242,9 +242,9 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
         for (size_t index = start_index; index < start_index + increment_count; ++index) {
           auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][index]);
           cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+          global_state_->finished_parallel_reductions++;
         }
         LOG(INFO, global_state_->rank)<<"Tensors copied back to device"<<" "<<std::this_thread::get_id();
-        global_state_->finished_parallel_reductions++;
       });
     }
     // for ranks that are not doing vhdd, increment finished_parallel_reductions right away
