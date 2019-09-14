@@ -161,11 +161,11 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
         std::vector<std::unique_ptr<char[]>> allreduce_buffers;
 
         // start device to host copies
-        for (size_t index = start_index; index < start_index + increment_count; ++index) {
+        for (size_t index = start_index, i = 0; index < start_index + increment_count; ++index, ++i) {
           auto& entry = entries.at(index);
           int buffer_len = entry.output->size();
           allreduce_buffers.emplace_back(new char[buffer_len]);
-          char* buffer_data = allreduce_buffers.at(index).get();
+          char* buffer_data = allreduce_buffers.at(i).get();
           
           auto cuda_result = cudaMemcpyAsync(
             buffer_data, (void*) entry.tensor->data(),
@@ -176,10 +176,10 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
         }
         LOG(INFO, global_state_->rank)<<"Finished dispatching cudamemcopyasync"<<" "<<std::this_thread::get_id();
 
-        for (size_t index = start_index; index < start_index + increment_count; ++index) {
+        for (size_t index = start_index, i = 0; index < start_index + increment_count; ++index, ++i) {
           auto& entry = entries.at(index);
           int buffer_len = entry.output->size();
-          char* buffer_data = allreduce_buffers.at(index).get();
+          char* buffer_data = allreduce_buffers.at(i).get();
           std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
 
           // wait for this layer to finish copying to host
@@ -591,11 +591,11 @@ void AllRings::WaitAllMessages() {
   while (!all_done) {
     all_done = true;
     for (int i = 0; i < messages.size(); i++) {
-      if (rank == 0)
+      if (rank == 0 || rank == 8)
         LOG(INFO,rank)<<"testing "<<i<<"th message.";
       if (!messages.at(i)->Test())
         all_done = false;
-      if (rank == 0)
+      if (rank == 0 || rank == 8)
         LOG(INFO,rank)<<"done checking "<<i<<"th message.";
     }
   }
