@@ -590,9 +590,13 @@ void AllRings::WaitAllMessages() {
   LOG(INFO,rank)<<"***size of messages "<<messages.size();
   while (!all_done) {
     all_done = true;
-    for (auto& message : messages) {
-      if (!message->Test())
+    for (int i = 0; i < messages.size(); i++) {
+      if (rank == 0)
+        LOG(INFO,rank)<<"testing "<<i<<"th message.";
+      if (!messages.at(i)->Test())
         all_done = false;
+      if (rank == 0)
+        LOG(INFO,rank)<<"done checking "<<i<<"th message.";
     }
   }
   LOG(INFO,rank)<<"deleting each message";
