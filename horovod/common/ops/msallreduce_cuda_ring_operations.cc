@@ -171,7 +171,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
             buffer_data, (void*) entry.tensor->data(),
             buffer_len, 
             cudaMemcpyDeviceToHost,
-            cuda_context_->streams[global_state_->current_nccl_stream][index]);
+            cuda_context_->streams[global_state_->current_nccl_stream][i]);
           cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
         }
         LOG(INFO, global_state_->rank)<<"Finished dispatching cudamemcopyasync"<<" "<<std::this_thread::get_id();
@@ -183,7 +183,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
           std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
 
           // wait for this layer to finish copying to host
-          auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][index]);
+          LOG(INFO,global_state_->rank)<<"Waiting to copy tensor for stream "<<i;
+          auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][i]);
           cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
 
           MPI_Comm* node_comm = &global_state_->reduction_comms[global_state_->rank_log_size-1];
@@ -234,14 +235,14 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
             (void*) entry.tensor->data(), buffer_data,
             buffer_len, 
             cudaMemcpyHostToDevice,
-            cuda_context_->streams[global_state_->current_nccl_stream][index]);
+            cuda_context_->streams[global_state_->current_nccl_stream][i]);
           cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
         }
         LOG(INFO, global_state_->rank)<<"Cudamemcpy to device dispatched"<<" "<<std::this_thread::get_id();
 
         // wait for all copies to device to finish
-        for (size_t index = start_index; index < start_index + increment_count; ++index) {
-          auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][index]);
+        for (size_t index = start_index, i = 0; index < start_index + increment_count; ++index, ++i) {
+          auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][i]);
           cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
         }
         LOG(INFO, global_state_->rank)<<"Tensors copied back to device"<<" "<<std::this_thread::get_id();
