@@ -155,7 +155,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     MPI_Comm_rank(global_state_->local_comm, &local_rank);
     if (local_rank == 0 && global_state_->rank_log_size != 0) {
       boost::asio::post(*global_state_->background_thread_pool,
-      [this,&entries, &start_index, &increment_count]
+      [this,&entries, start_index, increment_count]
       {
         LOG(INFO, global_state_->rank)<<"Begin vhdd"<<" "<<std::this_thread::get_id();
         std::vector<std::unique_ptr<char[]>> allreduce_buffers;
