@@ -70,16 +70,21 @@ void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid)
 }
 
 Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, const Response& response) {
+  int pc = 0;
+  printf("HHHH %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
   if(entries.size() < 1) {
       return Status::OK();
   }
   //TODO how do we report statuses?
   std::map<int, Status> return_statuses;
   int num_reductions = entries.size();
-	AllRings all_rings(global_state_->local_rank, global_state_->local_size);
+	// AllRings all_rings(global_state_->local_rank, global_state_->local_size);
+  //Todo move this outside
+	AllRings all_rings(global_state_->rank, global_state_->size);
   std::deque<FusionBufferManager> used_buffer_managers;
   std::deque<void*> recv_buffers;
   LOG(INFO, global_state_->rank)<<"Ready to process "<<num_reductions<<" tensors in gpu";
+
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
     void* buffer_data;
@@ -90,6 +95,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
 
     buffer_len = entry.output->size();
 
+    printf("HHHH %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
     if(entry.tensor->data() == entry.output->data()) {
         LOG(INFO, global_state_->rank)<<"Output and input pointing to same data. Creating temp buffer "<<std::this_thread::get_id();
 
@@ -119,26 +125,38 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
     else {
         recv_buffer = (void*) entry.output->data();
     }
+    printf("HHHH %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
     recv_buffers.push_back(recv_buffer);
     LOG(INFO, global_state_->rank)<<"Begin to process gpu tensor with size "<<entry.tensor->size()<<" into output buffer with size "<<entry.output->size()<<" "<<std::this_thread::get_id();
   
     // This will create a stream per layer.
     InitCUDA(entry, layerid);
     LOG(INFO, global_state_->rank)<<"Begin processing gpu tensor in layer "<<layerid<<" "<<std::this_thread::get_id();
+    printf("HHHH %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
+
+
+    printf("HHHH %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
     all_rings.InitMessageInRing(new ReduceMessage(mpi_context_),
                       buffer_data,
                       recv_buffer,
                       buffer_len,
                       entry.tensor->dtype(),
-                      global_state_->local_comm,
+                      MPI_COMM_WORLD,
+                      //global_state_->local_comm,
                       layerid,
-                      global_state_->local_rank);
+                      global_state_->rank
+                      //global_state_->local_rank
+                      );
+    printf("HHHH %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
   }
+  printf("TTTT %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
   all_rings.WaitAllMessages();
+  printf("TTTT %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
   // Return used buffer managers to the queue
   buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
+  printf("TTTT %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
 
-  int local_rank = 0;
+/*  int local_rank = 0;
   MPI_Comm_rank(global_state_->local_comm, &local_rank);
   if (local_rank == 0 && global_state_->rank_log_size != 0) {
     std::vector<std::unique_ptr<char[]>> allreduce_buffers;
@@ -224,8 +242,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
       auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
       cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
     }
-  }
-
+  }*/
+/*
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
     void* buffer_data;
@@ -245,17 +263,22 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
                       nullptr,
                       buffer_len,
                       entry.output->dtype(),
-                      global_state_->local_comm,
+                      MPI_COMM_WORLD,
+                      //global_state_->local_comm,
                       layerid,
-                      global_state_->local_rank);
+                      global_state_->rank
+                      //global_state_->local_rank
+                      );
   }
-  all_rings.WaitAllMessages();
+  all_rings.WaitAllMessages();*/
+  printf("TTTT %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
     if(entry.tensor->data() != entry.output->data()) {
       memcpyUtil(entry, (void *) entry.output->data(), (void *) entry.tensor->data(), (size_t) entry.tensor->size(), layerid);
     }
   }
+  printf("TTTT %d | %d\n", global_state_->rank, pc); pc++; fflush(stdout);
 
   return Status::OK();
 }
@@ -284,7 +307,7 @@ namespace msallreduce{
 void Ring::InitRing(int tmp[], bool _isFat, int rank, int size) {
   load = 0;
   isFat = _isFat;
-  for (int i = 0; i < 8; i++)
+  for (int i = 0; i < 16; i++)
     loop[i] = tmp[i];
 
   for (int j = 0; j < size; j++) { // go through allranks
@@ -492,22 +515,22 @@ AllRings::AllRings(int rank, int size) {
   rings = new Ring[num_rings];
   {
     // fat ring 1
-    int tmp[8] = {0, 3, 2, 1, 5, 6, 7, 4};
+    int tmp[16] = {0, 3, 2, 1, 5, 6, 7, 4, 8, 11, 10, 9, 13, 14, 15, 12};
     rings[0].InitRing(tmp, true, rank, size);
   }
   {
     // fat ring 2
-    int tmp[8] = {0, 4, 7, 6, 5, 1, 2, 3};
+    int tmp[16] = {0, 4, 7, 6, 5, 1, 2, 3, 8, 12, 15, 14, 13, 9, 10, 11};
     rings[1].InitRing(tmp, true, rank, size);
   }
   {
     // skinny ring 1
-    int tmp[8] = {0, 2, 6, 4, 5, 7, 3, 1};
+    int tmp[16] = {0, 2, 6, 4, 5, 7, 3, 1, 8, 10, 14, 12, 13, 15, 11, 9};
     rings[2].InitRing(tmp, false, rank, size);
   }
   {
     // skinny ring 2
-    int tmp[8] = {0, 1, 3, 7, 5, 4, 6, 2};
+    int tmp[16] = {0, 1, 3, 7, 5, 4, 6, 2, 8, 9, 11, 15, 13, 12, 14, 10};
     rings[3].InitRing(tmp, false, rank, size);
   }
 };
@@ -545,7 +568,7 @@ void AllRings::InitMessageInRing(Message* message, void* grad_buf, void* recv_bu
   }
   messages.push_back(message);
 	Ring*	ring = PickRing(count);
-  message->InitMessage(ring, rank, grad_tag % 8, count, grad_buf, recv_buf, datatype, comm, grad_tag);
+  message->InitMessage(ring, rank, grad_tag % 16, count, grad_buf, recv_buf, datatype, comm, grad_tag);
 }
 
 void AllRings::WaitAllMessages() {

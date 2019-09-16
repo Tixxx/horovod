@@ -50,7 +50,7 @@ class MsCudaRingAllreduceOp : public MsAllreduceOp {
 namespace msallreduce {
 
 struct Ring {
-  int loop[8];
+  int loop[16];
   int nextGPU;
   int prevGPU;
   int load;
