@@ -56,12 +56,17 @@ namespace common {
 #define GLOO_ALLREDUCE "GLOO_ALLREDUCE"
 #define GLOO_ALLGATHER "GLOO_ALLGATHER"
 #define GLOO_BCAST "GLOO_BCAST"
+#define POINT_TO_POINT_SEND "POINT_TO_POINT_SEND"
+#define POINT_TO_POINT_RECEIVE "POINT_TO_POINT_RECEIVE"
 
 // String constant for gloo interface.
 #define GLOO_DEFAULT_IFACE "eth0"
 
 // Device ID used for CPU.
 #define CPU_DEVICE_ID (-1)
+
+// Point-to-Point communication message chunk size for RDMA
+#define P2P_MESSAGE_CHUNK_SIZE (1 << 15)
 
 // List of supported frameworks.
 enum Framework { TENSORFLOW, PYTORCH, MXNET };

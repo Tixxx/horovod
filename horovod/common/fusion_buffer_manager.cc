@@ -21,11 +21,12 @@ namespace common {
 Status FusionBufferManager::InitializeBuffer(int64_t threshold, int device, std::shared_ptr<OpContext> context,
                                              int stream_id,
                                              std::function<void()> on_start_init,
-                                             std::function<void()> on_end_init) {
+                                             std::function<void()> on_end_init,
+                                             std::function<bool(int64_t&, int64_t&)> validity_check) {
   auto& elem = tensor_fusion_buffers_[std::make_tuple(device, context->framework(), stream_id)];
   auto& buffer = elem.first;
   int64_t& size = elem.second;
-  if (size != threshold) {
+  if (!validity_check(size, threshold)) {
     buffer.reset();
     size = 0;
   }
@@ -44,6 +45,10 @@ Status FusionBufferManager::InitializeBuffer(int64_t threshold, int device, std:
 
   return Status::OK();
 }
+
+Status IntializeTempBuffer(int64_t size,
+                              int device, std::shared_ptr<OpContext> context,
+                              int stream_id);
 
 std::shared_ptr<PersistentBuffer>& FusionBufferManager::GetBuffer(int device, Framework framework, int stream_id) {
   return tensor_fusion_buffers_[std::make_tuple(device, framework, stream_id)].first;

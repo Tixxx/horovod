@@ -31,6 +31,9 @@ namespace common {
 
 // Horovod knobs.
 #define HOROVOD_MPI_THREADS_DISABLE "HOROVOD_MPI_THREADS_DISABLE"
+#define HOROVOD_MPI_P2P_MESSAGE_CHUNK_ENABLE "HOROVOD_MPI_P2P_MESSAGE_CHUNK_ENABLE"
+#define HOROVOD_MSALLREDUCE_ENABLE "HOROVOD_MSALLREDUCE_ENABLE"
+#define HOROVOD_NUMBER_OF_MPI_THREADS "HOROVOD_NUMBER_OF_MPI_THREADS"
 #define HOROVOD_TIMELINE "HOROVOD_TIMELINE"
 #define HOROVOD_TIMELINE_MARK_CYCLES "HOROVOD_TIMELINE_MARK_CYCLES"
 #define HOROVOD_AUTOTUNE "HOROVOD_AUTOTUNE"
@@ -53,6 +56,11 @@ namespace common {
 
 // Check that Horovod is initialized.
 Status CheckInitialized();
+
+enum AllreduceType {
+    SUM_ALLREDUCE = 0,
+    MS_ALLREDUCE = 1
+};
 
 extern "C" {
 
@@ -91,7 +99,8 @@ Status EnqueueTensorAllreduce(std::shared_ptr<OpContext> context,
                               std::shared_ptr<Tensor> output,
                               std::shared_ptr<ReadyEvent> ready_event,
                               const std::string name, const int device,
-                              StatusCallback callback);
+                              StatusCallback callback,
+                              AllreduceType allreduce_type = AllreduceType::SUM_ALLREDUCE);
 
 Status EnqueueTensorAllgather(std::shared_ptr<OpContext> context,
                               std::shared_ptr<Tensor> tensor,
