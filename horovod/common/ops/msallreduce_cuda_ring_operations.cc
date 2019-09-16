@@ -588,23 +588,16 @@ void AllRings::WaitAllMessages() {
   
   bool all_done = false;
   int rank = messages.front()->global_state->rank;
-  LOG(INFO,rank)<<"***size of messages "<<messages.size();
   while (!all_done) {
     all_done = true;
     for (int i = 0; i < messages.size(); i++) {
-      if (rank == 0 || rank == 8)
-        LOG(INFO,rank)<<"testing "<<i<<"th message.";
       if (!messages.at(i)->Test())
         all_done = false;
-      if (rank == 0 || rank == 8)
-        LOG(INFO,rank)<<"done checking "<<i<<"th message.";
     }
   }
-  LOG(INFO,rank)<<"deleting each message";
   for (int i = 0; i < messages.size(); i++)
     delete messages[i];
   messages.clear();
-  LOG(INFO,rank)<<"deleting each message";
 }
 
 }

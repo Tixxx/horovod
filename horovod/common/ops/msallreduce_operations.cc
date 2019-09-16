@@ -328,6 +328,7 @@ template<typename T, typename F, typename S>
 void MsAllreduceOp::SyncAllreduce(T* grad_buffer, T* recv_buffer, int count, MPI_Comm communicator, MPI_Comm* reduction_comms, int layerid, TensorTableEntry entry, F dotProdFunc, S scaleAddFunc) {
     int rank;
     int size;
+    LOG(INFO,global_state_->rank)<<"In syncAllreduce"<<" for layer: "<<layerid<<" "<<std::this_thread::get_id();
     MPI_Comm_rank(communicator, &rank);
     MPI_Comm_size(communicator, &size);
     //MPI_Allreduce((float*) grad_buffer, (float*) recv_buffer, count/2, MPI_FLOAT, MPI_SUM, communicator);
@@ -408,6 +409,7 @@ void MsAllreduceOp::SyncAllreduce(T* grad_buffer, T* recv_buffer, int count, MPI
                 recv_buffer = &recv_buffer[nghrCount];
             }
             if (level == 1) {
+                LOG(INFO,global_state_->rank)<<"Doing scalAdd in syncallreduce"<<" for layer: "<<layerid<<" "<<std::this_thread::get_id();
                 scaleAddFunc(myCount, 0.5, grad_buffer , 0.5, recv_buffer, global_state_, layerid);
             } else {
                 PairwiseReduceWithComm(grad_buffer, recv_buffer, myCount, layerid, reduction_comms[comm_index], (rank & level) == 0, dotProdFunc, scaleAddFunc);
