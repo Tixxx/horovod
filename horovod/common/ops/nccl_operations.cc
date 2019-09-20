@@ -15,6 +15,8 @@
 // =============================================================================
 
 #include "nccl_operations.h"
+#include "psl_allreduce.h"
+
 
 namespace horovod {
 namespace common {
@@ -294,11 +296,13 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
     timeline.ActivityEndAll(entries);
 
     timeline.ActivityStartAll(entries, MPI_ALLREDUCE);
-    int op = MPI_Allreduce(MPI_IN_PLACE, host_buffer_,
-                           (int) total_num_elements,
-                           mpi_context_->GetMPIDataType(first_entry.tensor),
-                           mpi_context_->GetMPISumOp(first_entry.tensor->dtype()),
-                           mpi_context_->GetMPICommunicator(Communicator::CROSS));
+    int op = PSL_Allreduce(MPI_IN_PLACE, host_buffer_, (int)total_num_elements,
+                      local_size, // start_level
+                      mpi_context_->GetMPIDataType(first_entry.tensor),
+                      MPI_OP_NULL,//mpi_context_->GetMPISumOp(first_entry.tensor->dtype()),
+                      MPI_COMM_WORLD
+                      // mpi_context_->GetMPICommunicator(Communicator::CROSS)
+                      );
     if (op != MPI_SUCCESS) {
       throw std::runtime_error("MPI_Allreduce failed, see MPI output for details.");
     }
