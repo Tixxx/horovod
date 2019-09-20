@@ -64,6 +64,7 @@ struct Ring {
 
 struct Message {
   MPIContext* mpi_context;
+  HorovodGlobalState* global_state;
   MPI_Comm comm;
   MPI_Request req;
   Ring* ring;
@@ -76,7 +77,7 @@ struct Message {
   int tag;
   int count;
 
-  Message(MPIContext* mpi_context);
+  Message(MPIContext* mpi_context, HorovodGlobalState* global_state);
   void InitMessage(Ring* _ring, int rank, int _ring_starter_rank, int _count, void* _grad_buf, void* _recv_buf, DataType _datatype, MPI_Comm _comm, int _tag);
   virtual bool Test() = 0;
 protected:
@@ -84,21 +85,21 @@ protected:
 };
 
 struct AllreduceMessage : public Message {
-  AllreduceMessage(MPIContext* mpi_context);
+  AllreduceMessage(MPIContext* mpi_context, HorovodGlobalState* global_state);
   virtual bool Test();
 protected:
   virtual void Start();
 };
 
 struct ReduceMessage : public Message {
-  ReduceMessage(MPIContext* mpi_context);
+  ReduceMessage(MPIContext* mpi_context, HorovodGlobalState* global_state);
   virtual bool Test();
 protected:
   virtual void Start();
 };
 
 struct BroadcastMessage : public Message {
-  BroadcastMessage(MPIContext* mpi_context);
+  BroadcastMessage(MPIContext* mpi_context, HorovodGlobalState* global_state);
   virtual bool Test();
 protected:
   virtual void Start();

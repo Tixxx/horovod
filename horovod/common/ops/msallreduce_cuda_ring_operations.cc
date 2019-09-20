@@ -16,6 +16,7 @@
 
 #include "msallreduce_cuda_ring_operations.h"
 #include "msallreduce_cuda_kernels.h"
+#include <iostream>
 
 namespace horovod {
 namespace common {
@@ -39,12 +40,14 @@ MsCudaRingAllreduceOp::MsCudaRingAllreduceOp(MPIContext* mpi_context, CUDAContex
 void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid) {
   cuda_context_->ErrorCheck("cudaSetDevice", cudaSetDevice(entry.device));
 
+  LOG(INFO, global_state_->controller->GetRank())<<"Checking for existing stream for layer "<<layerid<<" "<<std::this_thread::get_id();
   // Ensure stream is in the map before executing reduction.
   cudaStream_t& stream = cuda_context_->streams[global_state_->current_nccl_stream][layerid];
   if (stream == nullptr) {
 
     std::lock_guard<std::mutex> guard(global_state_->buffer_lock);
     if (stream == nullptr) {
+      LOG(INFO, global_state_->controller->GetRank())<<"Stream is null, creating new stream "<<std::this_thread::get_id();
       int greatest_priority;
       cuda_context_->ErrorCheck("cudaDeviceGetStreamPriorityRange",
                                 cudaDeviceGetStreamPriorityRange(NULL, &greatest_priority));
@@ -56,6 +59,7 @@ void MsCudaRingAllreduceOp::InitCUDA(const TensorTableEntry& entry, int layerid)
   if (device_stream == nullptr) {
     std::lock_guard<std::mutex> guard(global_state_->buffer_lock);
     if (device_stream == nullptr) {
+      LOG(INFO, global_state_->controller->GetRank())<<"device Stream is null, creating new device stream "<<std::this_thread::get_id();
       int greatest_priority;
       cuda_context_->ErrorCheck("cudaDeviceGetStreamPriorityRange",
                                 cudaDeviceGetStreamPriorityRange(NULL, &greatest_priority));
@@ -76,149 +80,175 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
 	AllRings all_rings(global_state_->controller->GetLocalRank(), global_state_->controller->GetLocalSize());
   std::deque<FusionBufferManager> used_buffer_managers;
   std::deque<void*> recv_buffers;
-  for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-    auto& entry = entries.at(layerid);
-    void* buffer_data;
-    int buffer_len;
-    void* recv_buffer;
-
-    buffer_data = (void*) entry.tensor->data();
-
-    buffer_len = entry.output->size();
-
-    if(entry.tensor->data() == entry.output->data()) {
-
-        // Get the temp buffer to be used for the Op
-        FusionBufferManager buffer_manager;
-        if (!buffer_managers_.empty()) {
-          buffer_manager = buffer_managers_.front();
-          buffer_managers_.pop_front();
-        }
-        used_buffer_managers.push_back(buffer_manager);
-
-        // TODO: Maybe add before and after callbacks to timeline?
-        Status status = buffer_manager.InitializeBuffer(
-            buffer_len,
-            entry.device, entry.context,
-            global_state_->current_nccl_stream,
-            []() {},
-            []() {},
-            [](int64_t& size, int64_t& threshold) {return size >= threshold;});
-
-        if (!status.ok()) {
-            throw std::logic_error("MsAllreduceOp::Execute_helper: Initialize buffer failed.");
-        }
-        auto buffer = buffer_manager.GetBuffer(entry.device, entry.context->framework(), global_state_->current_nccl_stream);
-        recv_buffer = const_cast<void*>(buffer->AccessData(entry.context));
-    }
-    else {
-        recv_buffer = (void*) entry.output->data();
-    }
-    recv_buffers.push_back(recv_buffer);
-  
-    // This will create a stream per layer.
-    InitCUDA(entry, layerid);
-    all_rings.InitMessageInRing(new ReduceMessage(mpi_context_),
-                      buffer_data,
-                      recv_buffer,
-                      buffer_len,
-                      entry.tensor->dtype(),
-                      global_state_->local_comm,
-                      layerid,
-                      global_state_->controller->GetLocalRank());
-  }
-  all_rings.WaitAllMessages();
-  // Return used buffer managers to the queue
-  buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
-
-  int local_rank = 0;
-  MPI_Comm_rank(global_state_->local_comm, &local_rank);
-  if (local_rank == 0 && global_state_->rank_log_size != 0) {
-    std::vector<std::unique_ptr<char[]>> allreduce_buffers;
-
-    // start device to host copies
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
+  size_t unroll_size = 8;
+  size_t layerid = 0;
+  size_t elements_left = num_reductions;
+  global_state_->finished_parallel_reductions = 0;
+  while(elements_left > 0){
+    size_t increment_count = std::min(unroll_size, elements_left);
+    size_t start_index = layerid;
+    //enqueue messages
+    for (; layerid < start_index + increment_count; ++layerid) {
       auto& entry = entries.at(layerid);
-      int buffer_len = entry.output->size();
-      allreduce_buffers.emplace_back(new char[buffer_len]);
-      char* buffer_data = allreduce_buffers.at(layerid).get();
-      
-      auto cuda_result = cudaMemcpyAsync(
-        buffer_data, (void*) entry.tensor->data(),
-        buffer_len, 
-        cudaMemcpyDeviceToHost,
-        cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
-    }
+      void* buffer_data;
+      int buffer_len;
+      void* recv_buffer;
 
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto& entry = entries.at(layerid);
-      int buffer_len = entry.output->size();
-      char* buffer_data = allreduce_buffers.at(layerid).get();
-      std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
+      buffer_data = (void*) entry.tensor->data();
 
-      // wait for this layer to finish copying to host
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+      buffer_len = entry.output->size();
 
-      MPI_Comm* node_comm = &global_state_->reduction_comms[global_state_->rank_log_size-1];
-      switch (entry.output->dtype()) {
-          case HOROVOD_FLOAT16:
-            SyncAllreduce(
-              (uint16_t*) buffer_data,
-              (uint16_t*) recv_buffer.get(),
-              buffer_len / sizeof(uint16_t),
-              *node_comm,
-              global_state_->reduction_comms,
-              layerid,
-              entry,
-              ComputeDotAndNormSqrdsfp16,
-              ScaledAddfp16);
-          break;
-          case HOROVOD_FLOAT32:
-            SyncAllreduce(
-              (float*) buffer_data,
-              (float*) recv_buffer.get(),
-              buffer_len / sizeof(float),
-              *node_comm,
-              global_state_->reduction_comms,
-              layerid,
-              entry,
-              ComputeDotAndNormSqrds<float>,
-              ScaledAdd<float>);
-          break;
-          case HOROVOD_FLOAT64:
-            SyncAllreduce(
-              (double*) buffer_data,
-              (double*) recv_buffer.get(),
-              buffer_len / sizeof(double),
-              *node_comm,
-              global_state_->reduction_comms,
-              layerid,
-              entry,
-              ComputeDotAndNormSqrds<double>,
-              ScaledAdd<double>);
-          break;
-          default:
-            throw std::logic_error("MsAllreduceOp::Execute: Unsupported data type.");
+      if(entry.tensor->data() == entry.output->data()) {
+
+          // Get the temp buffer to be used for the Op
+          FusionBufferManager buffer_manager;
+          if (!buffer_managers_.empty()) {
+            buffer_manager = buffer_managers_.front();
+            buffer_managers_.pop_front();
+          }
+          used_buffer_managers.push_back(buffer_manager);
+
+          // TODO: Maybe add before and after callbacks to timeline?
+          Status status = buffer_manager.InitializeBuffer(
+              buffer_len,
+              entry.device, entry.context,
+              global_state_->current_nccl_stream,
+              []() {},
+              []() {},
+              [](int64_t& size, int64_t& threshold) {return size >= threshold;});
+
+          if (!status.ok()) {
+              throw std::logic_error("MsAllreduceOp::Execute_helper: Initialize buffer failed.");
+          }
+          auto buffer = buffer_manager.GetBuffer(entry.device, entry.context->framework(), global_state_->current_nccl_stream);
+          recv_buffer = const_cast<void*>(buffer->AccessData(entry.context));
       }
-
-      // start the copy back to device
-      cuda_result = cudaMemcpyAsync(
-        (void*) entry.tensor->data(), buffer_data,
-        buffer_len, 
-        cudaMemcpyHostToDevice,
-        cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+      else {
+          recv_buffer = (void*) entry.output->data();
+      }
+      recv_buffers.push_back(recv_buffer);
+    
+      // This will create a stream per inner layer.
+      InitCUDA(entry, layerid);
+      all_rings.InitMessageInRing(new ReduceMessage(mpi_context_, global_state_),
+                        buffer_data,
+                        recv_buffer,
+                        buffer_len,
+                        entry.tensor->dtype(),
+                        global_state_->local_comm,
+                        layerid,
+                        global_state_->controller->GetLocalRank());
     }
 
-    // wait for all copies to device to finish
-    for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][layerid]);
-      cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+    // wait for messages to finish
+    all_rings.WaitAllMessages();
+    // Return used buffer managers to the queue
+    buffer_managers_.insert(buffer_managers_.end(), used_buffer_managers.begin(), used_buffer_managers.end());
+  
+    int local_rank = 0;
+    // cross-node vhdd reduction
+    MPI_Comm_rank(global_state_->local_comm, &local_rank);
+    if (local_rank == 0 && global_state_->rank_log_size != 0) {
+      boost::asio::post(*global_state_->background_thread_pool,
+      [this,&entries, start_index, increment_count]
+      {
+        std::vector<std::unique_ptr<char[]>> allreduce_buffers;
+
+        // start device to host copies
+        for (size_t index = start_index, i = 0; index < start_index + increment_count; ++index, ++i) {
+          auto& entry = entries.at(index);
+          int buffer_len = entry.output->size();
+          allreduce_buffers.emplace_back(new char[buffer_len]);
+          char* buffer_data = allreduce_buffers.at(i).get();
+          
+          auto cuda_result = cudaMemcpyAsync(
+            buffer_data, (void*) entry.tensor->data(),
+            buffer_len, 
+            cudaMemcpyDeviceToHost,
+            cuda_context_->streams[global_state_->current_nccl_stream][i]);
+          cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+        }
+
+        for (size_t index = start_index, i = 0; index < start_index + increment_count; ++index, ++i) {
+          auto& entry = entries.at(index);
+          int buffer_len = entry.output->size();
+          char* buffer_data = allreduce_buffers.at(i).get();
+          std::unique_ptr<char[]> recv_buffer(new char[buffer_len]);
+
+          // wait for this layer to finish copying to host
+          auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][i]);
+          cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+
+          MPI_Comm* node_comm = &global_state_->reduction_comms[global_state_->rank_log_size-1];
+          switch (entry.output->dtype()) {
+              case HOROVOD_FLOAT16:
+                SyncAllreduce(
+                  (uint16_t*) buffer_data,
+                  (uint16_t*) recv_buffer.get(),
+                  buffer_len / sizeof(uint16_t),
+                  *node_comm,
+                  global_state_->reduction_comms,
+                  index,
+                  entry,
+                  ComputeDotAndNormSqrdsfp16,
+                  ScaledAddfp16);
+              break;
+              case HOROVOD_FLOAT32:
+                SyncAllreduce(
+                  (float*) buffer_data,
+                  (float*) recv_buffer.get(),
+                  buffer_len / sizeof(float),
+                  *node_comm,
+                  global_state_->reduction_comms,
+                  index,
+                  entry,
+                  ComputeDotAndNormSqrds<float>,
+                  ScaledAdd<float>);
+              break;
+              case HOROVOD_FLOAT64:
+                SyncAllreduce(
+                  (double*) buffer_data,
+                  (double*) recv_buffer.get(),
+                  buffer_len / sizeof(double),
+                  *node_comm,
+                  global_state_->reduction_comms,
+                  index,
+                  entry,
+                  ComputeDotAndNormSqrds<double>,
+                  ScaledAdd<double>);
+              break;
+              default:
+                throw std::logic_error("MsAllreduceOp::Execute: Unsupported data type.");
+          }
+
+          // start the copy back to device
+          cuda_result = cudaMemcpyAsync(
+            (void*) entry.tensor->data(), buffer_data,
+            buffer_len, 
+            cudaMemcpyHostToDevice,
+            cuda_context_->streams[global_state_->current_nccl_stream][i]);
+          cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+        }
+
+        // wait for all copies to device to finish
+        for (size_t index = start_index, i = 0; index < start_index + increment_count; ++index, ++i) {
+          auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][i]);
+          cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
+        }
+        global_state_->finished_parallel_reductions += increment_count;
+      });
     }
+    // for ranks that are not doing vhdd, increment finished_parallel_reductions right away
+    else {
+      global_state_->finished_parallel_reductions += increment_count;
+    }
+    elements_left -= increment_count;
   }
-
+  // wait for all vhdd to finish
+  while (global_state_->finished_parallel_reductions.load() < num_reductions) {
+    std::this_thread::sleep_for(std::chrono::nanoseconds(25));
+  }
+  //ring broadcast
   for (size_t layerid = 0; layerid < entries.size(); ++layerid) {
     auto& entry = entries.at(layerid);
     void* buffer_data;
@@ -230,8 +260,8 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
 
   
     // This will create a stream per layer.
-    InitCUDA(entry, layerid);
-    all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_),
+    //InitCUDA(entry, layerid);
+    all_rings.InitMessageInRing(new BroadcastMessage(mpi_context_, global_state_),
                       buffer_data,
                       nullptr,
                       buffer_len,
@@ -254,7 +284,7 @@ Status MsCudaRingAllreduceOp::Execute(std::vector<TensorTableEntry>& entries, co
 void MsCudaRingAllreduceOp::memcpyUtil(TensorTableEntry entry, void* dest, void* src, size_t buffer_len, int layerid) {
     assert(dest != nullptr);
     assert(src != nullptr);
-   auto cuda_result = cudaMemcpyAsync(dest, src,
+    auto cuda_result = cudaMemcpyAsync(dest, src,
                                     buffer_len, 
                                     cudaMemcpyDeviceToDevice,
                                     cuda_context_->streams[global_state_->current_nccl_stream][entry.device]);
@@ -300,8 +330,8 @@ void Ring::ReduceLoad(int message_len) {
   load -= message_len;
 }
 
-Message::Message(MPIContext* mpi_context)
-  : mpi_context(mpi_context) {
+Message::Message(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : mpi_context(mpi_context), global_state(global_state) {
 }
 
 void Message::InitMessage(Ring* _ring, int _rank, int _ring_starter_rank, int _count, void* _grad_buf, void* _recv_buf, DataType _datatype, MPI_Comm _comm, int _tag) {
@@ -318,8 +348,8 @@ void Message::InitMessage(Ring* _ring, int _rank, int _ring_starter_rank, int _c
   Start();
 }
 
-AllreduceMessage::AllreduceMessage(MPIContext* mpi_context)
-  : Message(mpi_context) {
+AllreduceMessage::AllreduceMessage(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : Message(mpi_context, global_state) {
 }
 
 void AllreduceMessage::Start() {
@@ -382,8 +412,8 @@ bool AllreduceMessage::Test() {
   return false;
 }
 
-ReduceMessage::ReduceMessage(MPIContext* mpi_context)
-  : Message(mpi_context) {
+ReduceMessage::ReduceMessage(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : Message(mpi_context, global_state) {
 }
 
 void ReduceMessage::Start() {
@@ -434,8 +464,8 @@ bool ReduceMessage::Test() {
   return false;
 }
 
-BroadcastMessage::BroadcastMessage(MPIContext* mpi_context)
-  : Message(mpi_context) {
+BroadcastMessage::BroadcastMessage(MPIContext* mpi_context, HorovodGlobalState* global_state)
+  : Message(mpi_context, global_state) {
 }
 
 void BroadcastMessage::Start() {
@@ -543,8 +573,8 @@ void AllRings::WaitAllMessages() {
   bool all_done = false;
   while (!all_done) {
     all_done = true;
-    for (auto& message : messages) {
-      if (!message->Test())
+    for (int i = 0; i < messages.size(); i++) {
+      if (!messages.at(i)->Test())
         all_done = false;
     }
   }

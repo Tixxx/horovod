@@ -15,7 +15,6 @@
 // =============================================================================
 
 #include "msallreduce_operations.h"
-#include <boost/asio/post.hpp>
 
 namespace horovod {
 namespace common {
@@ -189,7 +188,7 @@ void MsAllreduceOp::PairwiseReduceWithComm(T* a, T* b, int count, int layerid, M
     double bnormsq = 0.;
 
     dotProdFunc(a, b, count, dotProduct, anormsq, bnormsq, global_state_, layerid);
-    double reduce_vals[3];
+    double reduce_vals[3], temp_buffer[3];
     if (isLeftNeighbor) { 
         reduce_vals[0] = anormsq;
         reduce_vals[1] = bnormsq;
@@ -199,7 +198,7 @@ void MsAllreduceOp::PairwiseReduceWithComm(T* a, T* b, int count, int layerid, M
     }
     reduce_vals[2] = dotProduct;
     // TODO replace this with something else
-    MPI_Allreduce(MPI_IN_PLACE, reduce_vals, 3, MPI_DOUBLE, MPI_SUM, comm);
+    MpiP2pAllreduce(reduce_vals, temp_buffer, sizeof(reduce_vals), comm, layerid);
 
     if (isLeftNeighbor) { 
         anormsq = reduce_vals[0];
