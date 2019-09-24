@@ -303,6 +303,7 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
                       MPI_COMM_WORLD
                       // mpi_context_->GetMPICommunicator(Communicator::CROSS)
                       );
+//		int op = MPI_SUCCESS;
     if (op != MPI_SUCCESS) {
       throw std::runtime_error("MPI_Allreduce failed, see MPI output for details.");
     }

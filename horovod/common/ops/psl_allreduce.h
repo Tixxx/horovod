@@ -289,6 +289,7 @@ static void PairwiseReduceWithComm(T* a, T* b, int count, int layerid,
 }
 
 static bool IsPowerOfTwo(ulong x) { return (x != 0) && ((x & (x - 1)) == 0); }
+static std::vector<int> nghrCountVec;
 
 template <typename T>
 static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
@@ -363,6 +364,8 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
   int orgSize = size;
   size = nearest_power_2;
   if (rank < nearest_power_2) {
+		nghrCountVec.clear();
+
     int myCount = count;
     int comm_index;
     for (level = 1, comm_index = 0; level < size;
@@ -370,6 +373,7 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
       if (level < start_level) {
         continue;
       }
+
       int neighbor_rank = rank ^ level;
       int nghrCount = 0;
       int sendOffset = 0;
@@ -387,6 +391,9 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
         sendOffset = myCount;
         recvOffset = 0;
       }
+			nghrCountVec.push_back(nghrCount);
+			
+
       for (int i = 0; i < std::max(myCount, nghrCount); i += chunk_size)
         MPI_Sendrecv(
             (char*)(&grad_buffer[i + sendOffset]),
@@ -422,6 +429,8 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
                  (nghrLevelRank >= (levelNP - countRemainer))) {
         nghrCount += 1;
       }
+			nghrCount = nghrCountVec.back();
+			nghrCountVec.pop_back();
 
       if ((rank & level) == 0) {
         recv_buffer = &grad_buffer[myCount];
@@ -544,6 +553,7 @@ int PSL_Allreduce(const void* sendbuf, void* recvbuf, int count, int start_level
       throw std::logic_error("not implemented");
     }
     AllreduceImpl<float>((float*)input_buffer, (float*)tmp_buffer, count, start_level, comm, 0);
+    return MPI_SUCCESS;
   } else if (datatype == MPI_DOUBLE) {
     std::cerr << "not implemented yet " << datatype << std::endl;
     return MPI_ERR_TYPE;
@@ -562,8 +572,9 @@ int PSL_Allreduce(const void* sendbuf, void* recvbuf, int count, int start_level
       throw std::logic_error("not implemented");
     }
     AllreduceImpl<float16>((float16*)input_buffer, (float16*)tmp_buffer, count, start_level, comm, 0);
+    return MPI_SUCCESS;
   } else {
-    std::cerr << "unknown MPI type " << datatype << std::endl;
+    std::cerr << "unknown MPI type " << datatype << " size " << size << std::endl;
     return MPI_ERR_TYPE;
   }
   return MPI_SUCCESS;
