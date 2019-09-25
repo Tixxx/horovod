@@ -246,53 +246,92 @@ static void AllreduceImplTree(T* grad_buffer, T* recv_buffer, int count,
   }
 }
 
-template <typename T>
-static void PairwiseReduceWithComm(T* a, T* b, int count, int layerid,
-                                   MPI_Comm& comm, bool isLeftNeighbor) {
-  double dotProduct = 0.;
-  double anormsq = 0.;
-  double bnormsq = 0.;
+static vector<double> normAndDots;
 
-  DeviceImpl<T>::DotProd(a, b, count, dotProduct, anormsq, bnormsq);
-  double reduce_vals[3];
-  if (isLeftNeighbor) {
-    reduce_vals[0] = anormsq;
-    reduce_vals[1] = bnormsq;
-  } else {
-    reduce_vals[1] = anormsq;
-    reduce_vals[0] = bnormsq;
+template <typename T>
+static void PairwiseReduceWithComm(T* a, T* b, vector<int>& tensor_counts, int layerid,
+                                   MPI_Comm& comm, bool isLeftNeighbor) {
+  normAndDots.resize(tensor_counts.size()*3);
+
+  int countSoFar = 0;
+  for (int i = 0; i < tensor_counts.size(); i++){
+    double dotProduct = 0.;
+    double anormsq = 0.;
+    double bnormsq = 0.;
+
+    DeviceImpl<T>::DotProd(&a[countSoFar], &b[countSoFar], tensor_counts[i], dotProduct, anormsq, bnormsq);
+    normAndDots[i*3] = dotProduct;
+    if (isLeftNeighbor) {
+      normAndDots[i*3+1] = anormsq;
+      normAndDots[i*3+2] = bnormsq;
+    } else {
+      normAndDots[i*3+1] = bnormsq;
+      normAndDots[i*3+2] = anormsq;
+    }
+    countSoFar += tensor_counts[i];
   }
-  reduce_vals[2] = dotProduct;
+  // double reduce_vals[3];
+  // if (isLeftNeighbor) {
+  //   reduce_vals[0] = anormsq;
+  //   reduce_vals[1] = bnormsq;
+  // } else {
+  //   reduce_vals[1] = anormsq;
+  //   reduce_vals[0] = bnormsq;
+  // }
+  // reduce_vals[2] = dotProduct;
 
   // TODO replace this with something else
   // AllreduceImplTree(reduce_vals, temp_reduce_vals, 3, comm, layerid);
-  MPI_Allreduce(MPI_IN_PLACE, reduce_vals, 3, MPI_DOUBLE, MPI_SUM, comm);
+  MPI_Allreduce(MPI_IN_PLACE, normAndDots.data(), 3*tensor_counts.size(), MPI_DOUBLE, MPI_SUM, comm);
 
-  if (isLeftNeighbor) {
-    anormsq = reduce_vals[0];
-    bnormsq = reduce_vals[1];
-  } else {
-    anormsq = reduce_vals[1];
-    bnormsq = reduce_vals[0];
+  countSoFar = 0;
+  for (int i = 0; i < tensor_counts.size(); i++){
+    double dotProduct = normAndDots[i*3];
+    double anormsq;
+    double bnormsq;
+    if (isLeftNeighbor) {
+      anormsq = normAndDots[i*3+1];
+      bnormsq = normAndDots[i*3+2];
+    } else {
+      bnormsq = normAndDots[i*3+1];
+      anormsq = normAndDots[i*3+2];
+    }
+
+    double acoeff = 1;
+    double bcoeff = 1;
+    if (anormsq >= 1e-8)
+      acoeff = 1.0 - dotProduct / anormsq * 0.5;
+    if (bnormsq >= 1e-8)
+      bcoeff = 1.0 - dotProduct / bnormsq * 0.5;
+
+    DeviceImpl<T>::ScaleAdd(tensor_counts[i], acoeff, &a[countSoFar], bcoeff, &b[countSoFar]);
+    countSoFar += tensor_counts[i];
   }
-  dotProduct = reduce_vals[2];
 
-  double acoeff = 1;
-  double bcoeff = 1;
-  if (anormsq >= 1e-8)
-    acoeff = 1.0 - dotProduct / anormsq * 0.5;
-  if (bnormsq >= 1e-8)
-    bcoeff = 1.0 - dotProduct / bnormsq * 0.5;
+  // if (isLeftNeighbor) {
+  //   anormsq = reduce_vals[0];
+  //   bnormsq = reduce_vals[1];
+  // } else {
+  //   anormsq = reduce_vals[1];
+  //   bnormsq = reduce_vals[0];
+  // }
+  // dotProduct = reduce_vals[2];
+
+  // double acoeff = 1;
+  // double bcoeff = 1;
+  // if (anormsq >= 1e-8)
+  //   acoeff = 1.0 - dotProduct / anormsq * 0.5;
+  // if (bnormsq >= 1e-8)
+  //   bcoeff = 1.0 - dotProduct / bnormsq * 0.5;
 
   // a = acoeff * a + bcoeff * b
-  DeviceImpl<T>::ScaleAdd(count, acoeff, a, bcoeff, b);
 }
 
 static bool IsPowerOfTwo(ulong x) { return (x != 0) && ((x & (x - 1)) == 0); }
-static std::vector<int> nghrCountVec;
+static std::vector<vector<int>> nghrCountVec;
 
 template <typename T>
-static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
+static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, vector<int>& tensor_counts,
                               int start_level, MPI_Comm communicator,
                               int layerid, MPI_Comm* reduction_comms) {
   int rank;
@@ -315,58 +354,63 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
   int remaining_non_power_2 = size - nearest_power_2;
   int level;
   if (rank >= size - 2 * remaining_non_power_2) {
-    int myCount;
-    int nghrCount;
-    level = 0;
-    int neighbor_rank;
-    int sendOffset;
-    int recvOffset;
-    if (rank < nearest_power_2) {
-      neighbor_rank = rank + remaining_non_power_2;
-      myCount = (count >> 1);
-      nghrCount = count - myCount;
-      sendOffset = myCount;
-      recvOffset = 0;
-    } else {
-      nghrCount = (count >> 1);
-      myCount = count - nghrCount;
-      neighbor_rank = rank - remaining_non_power_2;
-      sendOffset = 0;
-      recvOffset = nghrCount;
-    }
-    for (int i = 0; i < std::max(nghrCount, myCount); i += chunk_size) {
-      MPI_Sendrecv(
-          (char*)(&grad_buffer[i + sendOffset]),
-          std::min(chunk_size, nghrCount - i) * sizeof(T) / sizeof(char),
-          MPI_CHAR, neighbor_rank, layerid,
-          (char*)(&recv_buffer[i + recvOffset]),
-          std::min(chunk_size, myCount - i) * sizeof(T) / sizeof(char),
-          MPI_CHAR, neighbor_rank, layerid, communicator, MPI_STATUS_IGNORE);
-    }
+    printf("Allreduce is not implemented for non-power2 number of ranks\n");
+    exit(-1);
+    // int myCount;
+    // int nghrCount;
+    // level = 0;
+    // int neighbor_rank;
+    // int sendOffset;
+    // int recvOffset;
+    // if (rank < nearest_power_2) {
+    //   neighbor_rank = rank + remaining_non_power_2;
+    //   myCount = (count >> 1);
+    //   nghrCount = count - myCount;
+    //   sendOffset = myCount;
+    //   recvOffset = 0;
+    // } else {
+    //   nghrCount = (count >> 1);
+    //   myCount = count - nghrCount;
+    //   neighbor_rank = rank - remaining_non_power_2;
+    //   sendOffset = 0;
+    //   recvOffset = nghrCount;
+    // }
+    // for (int i = 0; i < std::max(nghrCount, myCount); i += chunk_size) {
+    //   MPI_Sendrecv(
+    //       (char*)(&grad_buffer[i + sendOffset]),
+    //       std::min(chunk_size, nghrCount - i) * sizeof(T) / sizeof(char),
+    //       MPI_CHAR, neighbor_rank, layerid,
+    //       (char*)(&recv_buffer[i + recvOffset]),
+    //       std::min(chunk_size, myCount - i) * sizeof(T) / sizeof(char),
+    //       MPI_CHAR, neighbor_rank, layerid, communicator, MPI_STATUS_IGNORE);
+    // }
 
-    DeviceImpl<T>::ScaleAdd(myCount, 1.0, &grad_buffer[recvOffset] , 1.0, &recv_buffer[recvOffset]);
+    // DeviceImpl<T>::ScaleAdd(myCount, 1.0, &grad_buffer[recvOffset] , 1.0, &recv_buffer[recvOffset]);
 
-    if (rank < nearest_power_2) {
-      for (int i = 0; i < nghrCount; i += chunk_size) {
-        MPI_Recv((char*)(&grad_buffer[i + sendOffset]),
-                 std::min(chunk_size, nghrCount - i) * sizeof(T) / sizeof(char),
-                 MPI_CHAR, neighbor_rank, layerid, communicator,
-                 MPI_STATUS_IGNORE);
-      }
-    } else {
-      for (int i = 0; i < myCount; i += chunk_size)
-        MPI_Send((char*)(&grad_buffer[i + recvOffset]),
-                 std::min(chunk_size, myCount - i) * sizeof(T) / sizeof(char),
-                 MPI_CHAR, neighbor_rank, layerid, communicator);
-    }
+    // if (rank < nearest_power_2) {
+    //   for (int i = 0; i < nghrCount; i += chunk_size) {
+    //     MPI_Recv((char*)(&grad_buffer[i + sendOffset]),
+    //              std::min(chunk_size, nghrCount - i) * sizeof(T) / sizeof(char),
+    //              MPI_CHAR, neighbor_rank, layerid, communicator,
+    //              MPI_STATUS_IGNORE);
+    //   }
+    // } else {
+    //   for (int i = 0; i < myCount; i += chunk_size)
+    //     MPI_Send((char*)(&grad_buffer[i + recvOffset]),
+    //              std::min(chunk_size, myCount - i) * sizeof(T) / sizeof(char),
+    //              MPI_CHAR, neighbor_rank, layerid, communicator);
+    // }
   }
 
+  int nghrCountVec_index = 0;
   int orgSize = size;
   size = nearest_power_2;
   if (rank < nearest_power_2) {
-		nghrCountVec.clear();
 
-    int myCount = count;
+    int total_count = 0;
+    for (int i = 0; i < tensor_counts.size(); i++)
+      total_count += tensor_counts[i];
+    int myCount = total_count;
     int comm_index;
     for (level = 1, comm_index = 0; level < size;
          level = (level << 1), comm_index++) {
@@ -380,18 +424,64 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
       int recvOffset = 0;
       int firstHalfMyCount = (myCount >> 1);
       int secondHalfMyCount = myCount - firstHalfMyCount;
+
+      if (nghrCountVec.size() <= nghrCountVec_index)
+        nghrCountVec.emplace_back();
+			nghrCountVec[nghrCountVec_index].resize(tensor_counts.size());
+
+      int myCountSoFar = 0;
+      int nghrCountSoFar = 0;
       if ((rank & level) != 0) {
         myCount = secondHalfMyCount;
         nghrCount = firstHalfMyCount;
         sendOffset = 0;
         recvOffset = nghrCount;
+
+        for (int i = 0; i < tensor_counts.size(); i++){
+          if (nghrCountSoFar <= nghrCount){
+            if (nghrCountSoFar+tensor_counts[i] <= nghrCount){
+              nghrCountVec[nghrCountVec_index][i] = tensor_counts[i];
+              tensor_counts[i] = 0;
+            } else {
+              nghrCountVec[nghrCountVec_index][i] = nghrCount - nghrCountSoFar; // should not be negative
+              tensor_counts[i] = tensor_counts[i] - (nghrCount - nghrCountSoFar); // should not be negative
+            }
+          } else {
+            tensor_counts[i] = tensor_counts[i];
+            nghrCountVec[nghrCountVec_index][i] = 0;
+          }
+          nghrCountSoFar += nghrCountVec[nghrCountVec_index][i];
+          myCountSoFar += tensor_counts[i];
+        }
       } else {
         myCount = firstHalfMyCount;
         nghrCount = secondHalfMyCount;
         sendOffset = myCount;
         recvOffset = 0;
+
+        for (int i = 0; i < tensor_counts.size(); i++){
+          if (myCountSoFar <= myCount){
+            if (myCountSoFar+tensor_counts[i] <= myCount){
+              tensor_counts[i] = tensor_counts[i];
+              nghrCountVec[nghrCountVec_index][i] = 0;
+            } else {
+              nghrCountVec[nghrCountVec_index][i] = tensor_counts[i] - (myCount - myCountSoFar); // should not be negative
+              tensor_counts[i] = myCount - myCountSoFar; // should not be negative
+            }
+          } else {
+            nghrCountVec[nghrCountVec_index][i] = tensor_counts[i];
+            tensor_counts[i] = 0;
+          }
+          nghrCountSoFar += nghrCountVec[nghrCountVec_index][i];
+          myCountSoFar += tensor_counts[i];
+        }
       }
-			nghrCountVec.push_back(nghrCount);
+      if (nghrCountSoFar != nghrCount || myCountSoFar != myCount){
+        printf("!!!!!!!!!!! Something went wrong!\n");
+        exit(-1);
+      }
+      
+      nghrCountVec_index++;
 			
 
       for (int i = 0; i < std::max(myCount, nghrCount); i += chunk_size)
@@ -406,31 +496,23 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
         grad_buffer = &grad_buffer[nghrCount];
         recv_buffer = &recv_buffer[nghrCount];
       }
-      PairwiseReduceWithComm<T>(grad_buffer, recv_buffer, myCount, layerid,
+      PairwiseReduceWithComm<T>(grad_buffer, recv_buffer, tensor_counts, layerid,
                                 reduction_comms[comm_index],
                                 (rank & level) == 0);
     }
 
     for (level = (size >> 1); level > 0; level = (level >> 1)) {
-	  if (level < start_level){
-	    continue;
-	  }
-      int neighbor_rank = rank ^ level;
-      int nghrCount = myCount;
-      int levelNP = (level << 1);
-      int levelSizeDeterminer = levelNP - 1;
-      int countRemainer = (count & levelSizeDeterminer);
-      int myLevelRank = (rank & levelSizeDeterminer);
-      int nghrLevelRank = (neighbor_rank & levelSizeDeterminer);
-      if ((myLevelRank >= (levelNP - countRemainer)) &&
-          (nghrLevelRank < (levelNP - countRemainer))) {
-        nghrCount -= 1;
-      } else if ((myLevelRank < (levelNP - countRemainer)) &&
-                 (nghrLevelRank >= (levelNP - countRemainer))) {
-        nghrCount += 1;
+      if (level < start_level){
+        continue;
       }
-			nghrCount = nghrCountVec.back();
-			nghrCountVec.pop_back();
+      int neighbor_rank = rank ^ level;
+
+      nghrCountVec_index--;
+      int nghrCount = 0;
+      for (int i = 0; i < tensor_counts.size(); i++){
+        nghrCount += nghrCountVec[nghrCountVec_index][i];
+        tensor_counts[i] += nghrCountVec[nghrCountVec_index][i];
+      }
 
       if ((rank & level) == 0) {
         recv_buffer = &grad_buffer[myCount];
@@ -453,23 +535,23 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
   size = orgSize;
 
   if (rank >= size - 2 * remaining_non_power_2) {
-    level = 0;
-    int neighbor_rank;
-    if (rank < nearest_power_2) {
-      neighbor_rank = rank + remaining_non_power_2;
-      for (int i = 0; i < count; i += chunk_size) {
-        MPI_Send((char*)(&grad_buffer[i]),
-                 std::min(chunk_size, count - i) * sizeof(T) / sizeof(char),
-                 MPI_CHAR, neighbor_rank, layerid, communicator);
-      }
-    } else {
-      neighbor_rank = rank - remaining_non_power_2;
-      for (int i = 0; i < count; i += chunk_size)
-        MPI_Recv((char*)(&grad_buffer[i]),
-                 std::min(chunk_size, count - i) * sizeof(T) / sizeof(char),
-                 MPI_CHAR, neighbor_rank, layerid, communicator,
-                 MPI_STATUS_IGNORE);
-    }
+    // level = 0;
+    // int neighbor_rank;
+    // if (rank < nearest_power_2) {
+    //   neighbor_rank = rank + remaining_non_power_2;
+    //   for (int i = 0; i < count; i += chunk_size) {
+    //     MPI_Send((char*)(&grad_buffer[i]),
+    //              std::min(chunk_size, count - i) * sizeof(T) / sizeof(char),
+    //              MPI_CHAR, neighbor_rank, layerid, communicator);
+    //   }
+    // } else {
+    //   neighbor_rank = rank - remaining_non_power_2;
+    //   for (int i = 0; i < count; i += chunk_size)
+    //     MPI_Recv((char*)(&grad_buffer[i]),
+    //              std::min(chunk_size, count - i) * sizeof(T) / sizeof(char),
+    //              MPI_CHAR, neighbor_rank, layerid, communicator,
+    //              MPI_STATUS_IGNORE);
+    // }
   }
   // std::cerr << " rere1 " << rank << std::endl;
 }
@@ -477,7 +559,7 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, int count,
 static MPI_Comm* reduction_comms = NULL;
 
 template <typename T>
-static void AllreduceImpl(T* grad_buffer, T* recv_buffer, int count, int start_level,
+static void AllreduceImpl(T* grad_buffer, T* recv_buffer, vector<int>& tensor_counts, int start_level,
                           MPI_Comm communicator, int layerid) {
   //   if (count <= 1024)
   //     AllreduceImplTree<T>(grad_buffer, recv_buffer, count, communicator,
@@ -486,7 +568,7 @@ static void AllreduceImpl(T* grad_buffer, T* recv_buffer, int count, int start_l
   //     if (reduction_comms == NULL) {
   //       throw std::logic_error("init comms please");
   //     }
-  AllreduceImplVHDD<T>(grad_buffer, recv_buffer, count, start_level, communicator, layerid,
+  AllreduceImplVHDD<T>(grad_buffer, recv_buffer, tensor_counts, start_level, communicator, layerid,
                        reduction_comms);
   //   }
 }
@@ -525,7 +607,7 @@ static void InitComms(MPI_Comm global_comm) {
   delete[] node_rank;
 }
 
-int PSL_Allreduce(const void* sendbuf, void* recvbuf, int count, int start_level,
+int PSL_Allreduce(const void* sendbuf, void* recvbuf, vector<int>& tensor_counts, int start_level,
                   MPI_Datatype datatype, MPI_Op op, MPI_Comm comm) {
   if (op != MPI_OP_NULL) {
     std::cerr << "MPI_op op must be null for parasail logic " << datatype
@@ -552,7 +634,7 @@ int PSL_Allreduce(const void* sendbuf, void* recvbuf, int count, int start_level
       tmp_buffer = recvbuf;
       throw std::logic_error("not implemented");
     }
-    AllreduceImpl<float>((float*)input_buffer, (float*)tmp_buffer, count, start_level, comm, 0);
+    AllreduceImpl<float>((float*)input_buffer, (float*)tmp_buffer, tensor_counts, start_level, comm, 0);
     return MPI_SUCCESS;
   } else if (datatype == MPI_DOUBLE) {
     std::cerr << "not implemented yet " << datatype << std::endl;
@@ -571,7 +653,7 @@ int PSL_Allreduce(const void* sendbuf, void* recvbuf, int count, int start_level
       tmp_buffer = recvbuf;
       throw std::logic_error("not implemented");
     }
-    AllreduceImpl<float16>((float16*)input_buffer, (float16*)tmp_buffer, count, start_level, comm, 0);
+    AllreduceImpl<float16>((float16*)input_buffer, (float16*)tmp_buffer, tensor_counts, start_level, comm, 0);
     return MPI_SUCCESS;
   } else {
     std::cerr << "unknown MPI type " << datatype << " size " << size << std::endl;

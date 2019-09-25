@@ -184,7 +184,10 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
   }
 
   int64_t num_elements = 0;
+  static std::vector<int> tensor_counts;
+  tensor_counts.clear();
   for (auto& e : entries) {
+    tensor_counts.push_back(e.tensor->shape().num_elements());
     num_elements += e.tensor->shape().num_elements();
   }
 
@@ -296,7 +299,7 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
     timeline.ActivityEndAll(entries);
 
     timeline.ActivityStartAll(entries, MPI_ALLREDUCE);
-    int op = PSL_Allreduce(MPI_IN_PLACE, host_buffer_, (int)total_num_elements,
+    int op = PSL_Allreduce(MPI_IN_PLACE, host_buffer_, tensor_counts,
                       local_size, // start_level
                       mpi_context_->GetMPIDataType(first_entry.tensor),
                       MPI_OP_NULL,//mpi_context_->GetMPISumOp(first_entry.tensor->dtype()),
