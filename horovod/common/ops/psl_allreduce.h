@@ -246,10 +246,10 @@ static void AllreduceImplTree(T* grad_buffer, T* recv_buffer, int count,
   }
 }
 
-static vector<double> normAndDots;
+static std::vector<double> normAndDots;
 
 template <typename T>
-static void PairwiseReduceWithComm(T* a, T* b, vector<int>& tensor_counts, int layerid,
+static void PairwiseReduceWithComm(T* a, T* b, std::vector<int>& tensor_counts, int layerid,
                                    MPI_Comm& comm, bool isLeftNeighbor) {
   normAndDots.resize(tensor_counts.size()*3);
 
@@ -328,10 +328,10 @@ static void PairwiseReduceWithComm(T* a, T* b, vector<int>& tensor_counts, int l
 }
 
 static bool IsPowerOfTwo(ulong x) { return (x != 0) && ((x & (x - 1)) == 0); }
-static std::vector<vector<int>> nghrCountVec;
+static std::vector<std::vector<int>> nghrCountVec;
 
 template <typename T>
-static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, vector<int>& tensor_counts,
+static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, std::vector<int>& tensor_counts,
                               int start_level, MPI_Comm communicator,
                               int layerid, MPI_Comm* reduction_comms) {
   int rank;
@@ -407,10 +407,10 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, vector<int>& tenso
   size = nearest_power_2;
   if (rank < nearest_power_2) {
 
-    int total_count = 0;
+    int total_counts_sum = 0;
     for (int i = 0; i < tensor_counts.size(); i++)
-      total_count += tensor_counts[i];
-    int myCount = total_count;
+      total_counts_sum += tensor_counts[i];
+    int myCount = total_counts_sum;
     int comm_index;
     for (level = 1, comm_index = 0; level < size;
          level = (level << 1), comm_index++) {
@@ -559,7 +559,7 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, vector<int>& tenso
 static MPI_Comm* reduction_comms = NULL;
 
 template <typename T>
-static void AllreduceImpl(T* grad_buffer, T* recv_buffer, vector<int>& tensor_counts, int start_level,
+static void AllreduceImpl(T* grad_buffer, T* recv_buffer, std::vector<int>& tensor_counts, int start_level,
                           MPI_Comm communicator, int layerid) {
   //   if (count <= 1024)
   //     AllreduceImplTree<T>(grad_buffer, recv_buffer, count, communicator,
@@ -607,13 +607,17 @@ static void InitComms(MPI_Comm global_comm) {
   delete[] node_rank;
 }
 
-int PSL_Allreduce(const void* sendbuf, void* recvbuf, vector<int>& tensor_counts, int start_level,
+int PSL_Allreduce(const void* sendbuf, void* recvbuf, std::vector<int>& tensor_counts, int start_level,
                   MPI_Datatype datatype, MPI_Op op, MPI_Comm comm) {
   if (op != MPI_OP_NULL) {
     std::cerr << "MPI_op op must be null for parasail logic " << datatype
               << std::endl;
     return MPI_ERR_OP;
   }
+
+  int count = 0;
+  for (int i = 0; i < tensor_counts.size(); i++)
+    count += tensor_counts[i];
 
   if (reduction_comms == NULL) {
     std::cerr << "initializing comms" << std::endl;
