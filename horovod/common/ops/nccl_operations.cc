@@ -149,6 +149,7 @@ void NCCLAllreduce::PopulateNCCLCommStrategy(int& nccl_rank, int& nccl_size,
 }
 
 #if HAVE_MPI
+
 Status
 NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
                                    const Response& response) {
@@ -184,10 +185,7 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
   }
 
   int64_t num_elements = 0;
-  static std::vector<int> tensor_counts;
-  tensor_counts.clear();
   for (auto& e : entries) {
-    tensor_counts.push_back(e.tensor->shape().num_elements());
     num_elements += e.tensor->shape().num_elements();
   }
 
@@ -299,6 +297,54 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
     timeline.ActivityEndAll(entries);
 
     timeline.ActivityStartAll(entries, MPI_ALLREDUCE);
+
+		static std::vector<int> tensor_counts;
+
+		if (global_state_->controller->IsHomogeneous()) {
+			tensor_counts.resize(entries.size());
+			int64_t num_elements_sofar = 0;
+			int i = 0;
+			for (auto& e : entries) {
+				int64_t e_num_elements = e.tensor->shape().num_elements();
+				int64_t left_boundary  = std::max(num_elements_sofar, local_rank * num_elements_per_rank); 
+				int64_t right_boundary = std::min(num_elements_sofar + e_num_elements, (local_rank+1) * num_elements_per_rank);
+				if (is_root_rank) {
+					if (num_elements_sofar + e_num_elements >= local_size * num_elements_per_rank){
+						left_boundary  = std::max(num_elements_sofar, local_size * num_elements_per_rank); 
+						right_boundary = num_elements_sofar + e_num_elements;
+					}
+				}
+				tensor_counts[i] = std::max(right_boundary - left_boundary, (int64_t)0);
+				
+				num_elements_sofar += e_num_elements;
+				i++;
+			}
+
+			int test_count = 0;
+			for (int i = 0; i < tensor_counts.size(); i++){
+				test_count += tensor_counts[i];
+				if (local_rank == 1)
+					printf("--> %d : %d\n", i, tensor_counts[i]);
+			}
+			if (test_count != total_num_elements){
+				printf("Error: something went wrong test_count = %d total_num_elements = %d rank = %d!\n", test_count, total_num_elements, local_rank);
+				exit(-1);
+			}
+		} else {
+			if (is_root_rank) {
+				tensor_counts.clear();
+				int i = 0;
+				for (auto& e : entries) {
+					int e_num_elements = e.tensor->shape().num_elements();
+					tensor_counts[i] = e_num_elements;
+					i++;
+				}
+			}
+		}
+
+
+
+
     int op = PSL_Allreduce(MPI_IN_PLACE, host_buffer_, tensor_counts,
                       local_size, // start_level
                       mpi_context_->GetMPIDataType(first_entry.tensor),
