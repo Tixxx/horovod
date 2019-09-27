@@ -308,13 +308,14 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
 				int64_t e_num_elements = e.tensor->shape().num_elements();
 				int64_t left_boundary  = std::max(num_elements_sofar, local_rank * num_elements_per_rank); 
 				int64_t right_boundary = std::min(num_elements_sofar + e_num_elements, (local_rank+1) * num_elements_per_rank);
+				tensor_counts[i] = std::max(right_boundary - left_boundary, (int64_t)0);
 				if (is_root_rank) {
 					if (num_elements_sofar + e_num_elements >= local_size * num_elements_per_rank){
 						left_boundary  = std::max(num_elements_sofar, local_size * num_elements_per_rank); 
 						right_boundary = num_elements_sofar + e_num_elements;
+						tensor_counts[i] += std::max(right_boundary - left_boundary, (int64_t)0);
 					}
 				}
-				tensor_counts[i] = std::max(right_boundary - left_boundary, (int64_t)0);
 				
 				num_elements_sofar += e_num_elements;
 				i++;

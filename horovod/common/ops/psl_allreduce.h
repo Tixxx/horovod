@@ -538,7 +538,7 @@ static void AllreduceImplVHDD(T* grad_buffer, T* recv_buffer, std::vector<int>& 
                                 reduction_comms[comm_index],
                                 (rank & level) == 0);
 			printf("%d Here 14\n", rank); std::fflush(stdout);
-			return;
+//			return;
     }
 
     for (level = (size >> 1); level > 0; level = (level >> 1)) {
