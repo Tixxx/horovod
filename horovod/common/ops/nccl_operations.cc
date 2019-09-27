@@ -321,7 +321,7 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
 				i++;
 			}
 
-			int test_count = 0;
+/*			int test_count = 0;
 			for (int i = 0; i < tensor_counts.size(); i++){
 				test_count += tensor_counts[i];
 				if (local_rank == 1)
@@ -330,7 +330,7 @@ NCCLHierarchicalAllreduce::Execute(std::vector<TensorTableEntry>& entries,
 			if (test_count != total_num_elements){
 				printf("Error: something went wrong test_count = %d total_num_elements = %d rank = %d!\n", test_count, total_num_elements, local_rank);
 				exit(-1);
-			}
+			}*/
 		} else {
 			if (is_root_rank) {
 				tensor_counts.clear();
