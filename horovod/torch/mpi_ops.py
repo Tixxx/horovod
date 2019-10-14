@@ -137,12 +137,12 @@ class HorovodAllreduce(torch.autograd.Function):
     def forward(ctx, tensor, average, name, allreduce_type):
         ctx.average = average
         ctx.allreduce_type = allreduce_type
-        handle = allreduce_async(tensor, allreduce_type=allreduce_type)
+        handle = allreduce_async(tensor, average, name, allreduce_type=allreduce_type)
         return synchronize(handle)
 
     @staticmethod
     def backward(ctx, grad_output):
-        return allreduce(grad_output, ctx.average, None, Compression.none, ctx.allreduce_type), None, None
+        return allreduce(grad_output, ctx.average, ctx.allreduce_type), None, None
 
 
 def allreduce(tensor, average=True, name=None, compression=Compression.none, allreduce_type=AllreduceType.SumAllreduce):
