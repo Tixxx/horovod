@@ -185,11 +185,12 @@ Status AdasumCudaAllreduceOp::NcclHierarchical(std::vector<TensorTableEntry>& en
                                               
     timeline.ActivityEndAll(entries);
 
-    timeline.ActivityStartAll(entries, MPI_ADASUM_ALLREDUCE);
+    //timeline.ActivityStartAll(entries, MPI_ADASUM_ALLREDUCE);
 
     // Since Adasum is not a per-element operation, an allreduce for fused
     // tensors needs to know boundaries of tensors. Calculate here the count
     // of elements for each tensor owned by this rank.
+    timeline.ActivityStartAll(entries, "ADASUM_BOUNDRY_AND_ALLOC");
     std::vector<int> tensor_counts(entries.size());
     if (global_state_->controller->IsHomogeneous()) {
       // For homogeneous clusters each rank owns a slice of the fused tensor.
@@ -226,6 +227,7 @@ Status AdasumCudaAllreduceOp::NcclHierarchical(std::vector<TensorTableEntry>& en
     }
 
     auto recv_buffer = GetRecvBuffer(total_buffer_len);
+    timeline.ActivityEndAll(entries);
     DispatchFusedAllreduce(entries, (void*)host_buffer, (void*)recv_buffer, tensor_counts,
                           local_size, // start_level
                           global_state_->controller->IsHomogeneous() ?
@@ -235,7 +237,7 @@ Status AdasumCudaAllreduceOp::NcclHierarchical(std::vector<TensorTableEntry>& en
                           reduction_comms_,
                           first_entry.tensor->dtype(),
                           global_state_);
-    timeline.ActivityEndAll(entries);
+    //timeline.ActivityEndAll(entries);
 
     timeline.ActivityStartAll(entries, MEMCPY_OUT_HOST_BUFFER);
     cuda_context_->ErrorCheck("cudaMemcpyAsync",

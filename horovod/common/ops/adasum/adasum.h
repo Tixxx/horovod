@@ -195,6 +195,8 @@ protected:
                       int tag,
                       Communicator_type* reduction_comms,
                       HorovodGlobalState *global_state) {
+    auto& timeline = global_state->timeline;
+    timeline.ActivityStartAll(entries, "ADASUM_ALRLEDUCE_INIT");
     int per_element_size = GetPerElementSize(horovod_datatype);
     int rank = GetLocalRankWithComm(communicator);
     int size = GetSizeWithComm(communicator);
@@ -222,12 +224,13 @@ protected:
       total_counts_sum += tensor_counts[i];
     int myCount = total_counts_sum;
     int comm_index;
+    timeline.ActivityEndAll(entries);
     for (level = 1, comm_index = 0; level < size;
         level = (level << 1), comm_index++) {
       if (level < start_level) {
         continue;
       }
-
+      timeline.ActivityStartAll(entries, "ADASUM_P1_SETUP");
       int neighbor_rank = rank ^ level;
       int nghrCount = 0;
       int sendOffset = 0;
@@ -287,7 +290,8 @@ protected:
       }
 
       nghrCountVec_index++;
-
+      timeline.ActivityEndAll(entries);
+      timeline.ActivityStartAll(entries, "ADASUM_P1_P2PSEND");
       this->PointToPointSendRecv((char*)(&grad_buffer[sendOffset]),
                                  nghrCount * per_element_size,
                                  (char*)(&recv_buffer[recvOffset]),
@@ -301,6 +305,7 @@ protected:
         grad_buffer = &grad_buffer[nghrCount];
         recv_buffer = &recv_buffer[nghrCount];
       }
+      timeline.ActivityEndAll(entries);
       FusedPairwiseReduceWithComm(entries,
                                   (uint8_t*)grad_buffer,
                                   (uint8_t*)recv_buffer,
@@ -317,6 +322,7 @@ protected:
       if (level < start_level){
         continue;
       }
+      timeline.ActivityStartAll(entries, "ADASUM_P2");
       int neighbor_rank = rank ^ level;
 
       nghrCountVec_index--;
@@ -344,6 +350,7 @@ protected:
         grad_buffer = &grad_buffer[-nghrCount];
       }
       myCount += nghrCount;
+      timeline.ActivityEndAll(entries);
     }
     size = orgSize;
   }
@@ -365,8 +372,10 @@ protected:
                                    bool isLeftNeighbor,
                                    std::vector<double>& normAndDots,
                                    HorovodGlobalState *global_state) {
+    auto& timeline = global_state->timeline;
     int per_element_size = GetPerElementSize(horovod_datatype);
     int bytesSoFar = 0;
+    timeline.ActivityStartAll(entries, "ADASUM_DOT_AND_NORM");
     for (size_t i = 0; i < tensor_counts.size(); i++){
       double dotProduct = 0.;
       double anormsq = 0.;
@@ -383,9 +392,11 @@ protected:
       }
       bytesSoFar += tensor_counts[i] * per_element_size;
     }
-
+    timeline.ActivityEndAll(entries);
+    timeline.ActivityStartAll(entries, "ADASUM_PSL_ALLREDUCE");
     SumAllreduceWithComm(entries, (void*)normAndDots.data(), 3*tensor_counts.size(), DataType::HOROVOD_FLOAT64, comm, global_state);
-
+    timeline.ActivityEndAll(entries);
+    timeline.ActivityStartAll(entries, "ADASUM_SCALED_ADD");
     bytesSoFar = 0;
     for (size_t i = 0; i < tensor_counts.size(); i++){
       double dotProduct = normAndDots[i*3];
@@ -409,6 +420,7 @@ protected:
       DispatchScaledAdd(horovod_datatype, tensor_counts[i], acoeff, &a[bytesSoFar], bcoeff, &b[bytesSoFar], layerid);
       bytesSoFar += tensor_counts[i] * per_element_size;
     }
+    timeline.ActivityEndAll(entries);
   }
 
   void DispatchFusedAllreduce(std::vector<TensorTableEntry>& entries, 
