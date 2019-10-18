@@ -393,9 +393,7 @@ protected:
       bytesSoFar += tensor_counts[i] * per_element_size;
     }
     timeline.ActivityEndAll(entries);
-    timeline.ActivityStartAll(entries, "ADASUM_PSL_ALLREDUCE");
     SumAllreduceWithComm(entries, (void*)normAndDots.data(), 3*tensor_counts.size(), DataType::HOROVOD_FLOAT64, comm, global_state);
-    timeline.ActivityEndAll(entries);
     timeline.ActivityStartAll(entries, "ADASUM_SCALED_ADD");
     bytesSoFar = 0;
     for (size_t i = 0; i < tensor_counts.size(); i++){

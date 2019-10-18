@@ -84,8 +84,9 @@ void AdasumMPI::SumAllreduceWithComm(std::vector<TensorTableEntry>& entries,
                                      MPI_Comm comm,
                                      HorovodGlobalState *global_state) {
   int status;
+  MPI_Barrier(comm);
   auto& timeline = global_state->timeline;
-  timeline.ActivityStartAll(entries, MPI_ALLREDUCE);
+  timeline.ActivityStartAll(entries, "ADASUM_MPI_ALLREDUCE");
   status = MPI_Allreduce(MPI_IN_PLACE,
                          data,
                          num_elements,
