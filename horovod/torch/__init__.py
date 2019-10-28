@@ -216,7 +216,7 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
         # Flag to indicate if given optimizer is initialized by apex.
         # If so, we will use amp calls on the optimizer.
         self._use_apex_optimizer = self._has_apex and hasattr(self, "_amp_stash")
-        self._handles = []
+        self._handles = {}
         self.backward_passes_per_step = backward_passes_per_step
         self._current_backward_pass_count = 0
         self._compression = compression
@@ -234,6 +234,9 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
                 for param in self._params
             ]
         self._name_array = {param: "allreduce_name_{}".format(i) for i, param in enumerate(self._params) }
+
+        # Flag to indicate synchronization on the first call to step() to prevent Horovod from crashing if step() is only called once
+        self._initial_sync = False
 
     def set_backward_passes_per_step(self, passes):
         self.backward_passes_per_step = passes
@@ -253,24 +256,37 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
         # delta = current - start
         # allreduce delta
         # start += delta
+
         super(self.__class__, self).step(closure)
         self._current_backward_pass_count += 1
         if self._current_backward_pass_count == self.backward_passes_per_step:
             with torch.no_grad():
+                if self._handles:
+                    # We calculate the new start based on reduced delta from previous step
+                    for start, current in zip(self._initial_model, self._params):
+                        handle, ctx = self._handles[current]
+                        delta = synchronize(handle)
+                        decompressed_delta = self._compression.decompress(delta, ctx)
+                        start.add_(decompressed_delta)
+                    self._handles.clear()
                 for start, current in zip(self._initial_model, self._params):                                
-                    current.data.sub_(start)
-                    delta = current
+                    delta = current - start
                     compressed_delta, ctx = self._compression.compress(delta)
-                    handle = allreduce_async_(compressed_delta.data, op=Adasum, name=self._name_array[current])
-                    self._handles.append((handle, compressed_delta, ctx))
-                for (handle, delta, ctx), start, current in zip(self._handles, self._initial_model, self._params):
-                    synchronize(handle)
-                    decompressed_delta = self._compression.decompress(delta, ctx)
-                    start.data.add_(decompressed_delta)
-                    current.data.copy_(start)
+                    handle = allreduce_async_(compressed_delta, op=Adasum, name=self._name_array[current])
+                    self._handles[current] = (handle, ctx)
+                    current.copy_(start)
+                if not self._initial_sync:
+                    for start, current in zip(self._initial_model, self._params):
+                        handle, ctx = self._handles[current]
+                        delta = synchronize(handle)
+                        decompressed_delta = self._compression.decompress(delta, ctx)
+                        start.add_(decompressed_delta)
+                        current.copy_(start)
+                    self._handles.clear()
+                    self._initial_sync = True
+
             if(self._use_apex_optimizer):
                 super(self.__class__, self)._master_params_to_model_params()
-            del self._handles[:]
             self._current_backward_pass_count = 0
 
 def DistributedOptimizer(optimizer, named_parameters=None,
