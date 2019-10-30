@@ -46,7 +46,7 @@ import collections
 
 class _DistributedOptimizer(torch.optim.Optimizer):
     def __init__(self, params, named_parameters, compression,
-                 backward_passes_per_step=1, op=Average):
+                 backward_passes_per_step=1, op=Average, pre_step_function=None):
         super(self.__class__, self).__init__(params)
         self._compression = compression
 
@@ -87,6 +87,7 @@ class _DistributedOptimizer(torch.optim.Optimizer):
         self._requires_update = set()
         self._synchronized = False
         self._should_synchronize = True
+        self.pre_step_function = pre_step_function
         if size() > 1:
             self._register_hooks()
 
@@ -203,7 +204,7 @@ class _DistributedOptimizer(torch.optim.Optimizer):
 
 class _DistributedAdasumOptimizer(torch.optim.Optimizer):
     def __init__(self, params, named_parameters, compression,
-                 backward_passes_per_step=1):
+                 backward_passes_per_step=1, pre_step_function=None):
         super(self.__class__, self).__init__(params)
 
         self._compression = compression
@@ -250,7 +251,7 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
             p : torch.zeros_like(p, requires_grad=False)
             for _, p in named_parameters
         }
-
+        self.pre_step_function = pre_step_function
         self._register_hooks()
 
     def set_backward_passes_per_step(self, passes):
@@ -298,6 +299,9 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
                 group['params'] = []
 
         start.data.copy_(p)
+
+        if self.pre_step_function is not None:
+            self.pre_step_function()
 
         super(self.__class__, self).step()
 
@@ -373,7 +377,8 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
 def DistributedOptimizer(optimizer, named_parameters=None,
                          compression=Compression.none,
                          backward_passes_per_step=1,
-                         op=Average):
+                         op=Average,
+                         pre_step_function=None):
     """
     An optimizer that wraps another torch.optim.Optimizer, using an allreduce to
     combine gradient values before applying gradients to model weights.
@@ -412,6 +417,8 @@ def DistributedOptimizer(optimizer, named_parameters=None,
                                   allows accumulating gradients over multiple
                                   mini-batches before reducing and applying them.
         op: The reduction operation to use when combining gradients across different ranks.
+        pre_step_function: The function passed in by users. It will be called before calling the step function of
+                           the underlying optimizer.
     """
     # We dynamically create a new class that inherits from the optimizer that was passed in.
     # The goal is to override the `step()` method with an allreduce implementation.
@@ -419,11 +426,11 @@ def DistributedOptimizer(optimizer, named_parameters=None,
     if op != Adasum or size() == 1:
         cls = type(optimizer.__class__.__name__, (optimizer.__class__,),
             dict(_DistributedOptimizer.__dict__))
-        return cls(optimizer.param_groups, named_parameters, compression, backward_passes_per_step, op)
+        return cls(optimizer.param_groups, named_parameters, compression, backward_passes_per_step, op, pre_step_function)
     else:
         cls = type(optimizer.__class__.__name__, (optimizer.__class__,),
             dict(_DistributedAdasumOptimizer.__dict__))
-        return cls(optimizer.param_groups, named_parameters, compression, backward_passes_per_step)
+        return cls(optimizer.param_groups, named_parameters, compression, backward_passes_per_step, pre_step_function)
 
 
 def broadcast_parameters(params, root_rank):
