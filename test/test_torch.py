@@ -1253,10 +1253,9 @@ class TorchTests(unittest.TestCase):
         """Test that delta optimizer."""
         # TODO support non-MPI Adasum operation
         # Only do this test if there are GPUs available.
+        hvd.init()
         if not hvd.mpi_enabled() or not torch.cuda.is_available():
             return
-
-        hvd.init()
         local_rank = hvd.local_rank()
         size = hvd.size()
 
@@ -1286,6 +1285,51 @@ class TorchTests(unittest.TestCase):
         opt.zero_grad()
         loss.backward()
         opt.step()
+
+    def test_delta_optimizer_lambda(self):
+        """Test that delta optimizer."""
+        # TODO support non-MPI Adasum operation
+        # Only do this test if there are GPUs available.
+        hvd.init()
+        if not hvd.mpi_enabled() or not torch.cuda.is_available():
+            return
+        local_rank = hvd.local_rank()
+        size = hvd.size()
+
+        # This test does not apply if there is only one worker.
+        if size == 1:
+            return
+        class Net(torch.nn.Module):
+            def __init__(self):
+                super(Net, self).__init__()
+                self.conv1 = torch.nn.Conv2d(1, 100, 1).cuda(local_rank)
+                self.conv2 = torch.nn.Conv2d(100, 1, 1).cuda(local_rank)
+
+            def forward(self, x):
+                x = x.cuda(local_rank)
+                x = self.conv1(x)
+                x = x.cuda(local_rank)
+                x = self.conv2(x)
+                return x
+
+        model = Net()
+        inp = torch.rand([1, 1, 1000, 1000])
+
+        opt = torch.optim.SGD(model.parameters(), lr=0.1)
+
+        def raise_(ex):
+            raise ex
+        # Simply raise an error in the lambda and catch it afterwards.
+        pre_step_func = lambda : raise_(Exception('lambda called'))
+        opt = hvd.DistributedOptimizer(opt, named_parameters=model.named_parameters(), op=hvd.Adasum, pre_step_function=pre_step_func)
+        loss = model(inp).sum()
+        opt.zero_grad()
+        try:
+            loss.backward()
+            opt.step()
+            assert False, 'Pre_step_function did not throw error in backward pass.'
+        except Exception as ex:
+            assert 'lambda called' in ex.args
 
     def test_duplicate_names(self):
         """Test that passing duplicate names to optimizer will fail."""
