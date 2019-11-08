@@ -30,10 +30,16 @@ except:
     check_extension('horovod.torch', 'HOROVOD_WITH_PYTORCH',
                     __file__, 'mpi_lib', '_mpi_lib')
 
+# Please run this function in a subprocess
+def _check_has_gpu():
+  import torch
+  return torch.cuda.is_available()
+
 from horovod.torch.compression import Compression
 from horovod.torch.mpi_ops import allreduce, allreduce_async, allreduce_, allreduce_async_
 from horovod.torch.mpi_ops import allgather, allgather_async
 from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadcast_async_
+from horovod.torch.mpi_ops import join
 from horovod.torch.mpi_ops import poll, synchronize
 from horovod.torch.mpi_ops import init, shutdown
 from horovod.torch.mpi_ops import size, local_size, rank, local_rank
@@ -354,10 +360,11 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
             self._handles[p] = (handle, ctx)
 
         for p, (handle, ctx) in self._handles.items():
+            # This means step() is called before backward_passes_per_steps finished.
+            # We do a synchoronous allreduce here.
             if not handle:
-                raise AssertionError("optimizer.zero_grad() was called after loss.backward() "
-                                    "but before optimizer.step() or optimizer.synchronize(). "
-                                    "This is prohibited as it can cause a race condition.")
+                handle, ctx = self._allreduce_grad_async(p)
+                self._handles[p] = (handle, ctx)
             delta = synchronize(handle)
             delta = self._compression.decompress(delta, ctx)            
             start = self._starting_models[p]

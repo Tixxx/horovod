@@ -26,7 +26,7 @@ from tensorflow.python.framework import load_library
 from tensorflow.python.framework import ops
 from tensorflow.python.platform import resource_loader
 
-from horovod.common.util import get_ext_suffix, get_average_backwards_compatibility_fun
+from horovod.common.util import get_ext_suffix, get_average_backwards_compatibility_fun, num_rank_is_power_2
 from horovod.common.basics import HorovodBasics as _HorovodBasics
 from horovod.tensorflow.util import _executing_eagerly
 
@@ -70,10 +70,17 @@ Average = _basics.Average
 Sum = _basics.Sum
 Adasum = _basics.Adasum
 
-has_gpu = _basics.has_gpu
+is_homogeneous = _basics.is_homogeneous
 
 handle_average_backwards_compatibility = get_average_backwards_compatibility_fun(_basics)
 
+check_num_rank_power_of_2 = num_rank_is_power_2
+
+# This function will create a default device map which includes all visible devices.
+# Please run this function in a subprocess
+def _check_has_gpu():
+  import tensorflow as tf
+  return tf.test.is_gpu_available()
 
 def _normalize_name(name):
     """Normalizes operation name to TensorFlow rules."""

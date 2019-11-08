@@ -23,6 +23,8 @@ from distutils.version import LooseVersion
 # Load all the necessary PyTorch C types.
 import torch
 
+import warnings
+
 # PyTorch v2 API starts with 1.0.0 (including nightly builds)
 _v2_api = LooseVersion(torch.__version__) >= LooseVersion('1.0.0')
 if _v2_api:
@@ -37,7 +39,8 @@ else:
     _NULL = mpi_lib._ffi.NULL
     _basics = _HorovodBasics(__file__, 'mpi_lib_impl', '_mpi_lib_impl')
 
-from horovod.common.util import get_average_backwards_compatibility_fun
+from horovod.common.util import get_average_backwards_compatibility_fun, gpu_available, num_rank_is_power_2
+
 from horovod.torch.compression import Compression
 
 # import basic methods
@@ -61,6 +64,8 @@ Average = _basics.Average
 Sum = _basics.Sum
 Adasum = _basics.Adasum
 
+is_homogeneous = _basics.is_homogeneous
+
 handle_average_backwards_compatibility = get_average_backwards_compatibility_fun(_basics)
 
 
@@ -71,6 +76,8 @@ _handle_map = {}
 
 # Only support fp16 allreduce for PyTorch versions using v2 API.
 _fp16_supported = _v2_api
+
+_has_gpu = gpu_available('torch')
 
 def _check_function(function_factory, tensor):
     function = function_factory(tensor)
@@ -94,8 +101,23 @@ def _allreduce_async(tensor, output, name, op):
     # Set the divisor for reduced gradients to average when necessary
     if op == Average:
         divisor = size()
-    elif (op == Adasum and nccl_built() and tensor.device.type != 'cpu' and _basics.has_gpu):
-        divisor = local_size()
+    elif (op == Adasum):
+        if (tensor.device.type != 'cpu' and _has_gpu):
+            if nccl_built():
+                if not is_homogeneous():
+                    raise NotImplementedError('Running GPU Adasum on heterogeneous cluster is not supported yet.')
+                elif not num_rank_is_power_2(int(size() / local_size())):
+                    raise NotImplementedError('Running GPU Adasum with non-power of 2 nodes is not supported yet.')
+                divisor = local_size()
+            else:
+                warnings.warn("Adasum reduction does not currently support "
+                    "GPU reduction using MPI. Tensors are copied to CPU memory instead."
+                    "To use Adasum for GPU reduction, please compile Horovod with HOROVOD_GPU_ALLREDUCE=NCCL.")
+                divisor = 1
+        else:
+            if not num_rank_is_power_2(size()):
+                raise NotImplementedError('Running Adasum with non-power of 2 ranks is not supported yet.')
+            divisor = 1
     else:
         divisor = 1
     # Averaging happens in framework code, so translate that to Sum for the actual call
@@ -468,3 +490,20 @@ def synchronize(handle):
     mpi_lib.horovod_torch_wait_and_clear(handle)
     _, output = _handle_map.pop(handle)
     return output
+
+
+def join(device=-1):
+    """A function that indicates that the rank finished processing data.
+
+    All ranks that did not call join() continue to process allreduce operations.
+    This function blocks Python thread until all ranks join.
+
+    Arguments:
+        device: An id of the device to create temprorary zero tensors (default -1, CPU)
+
+    Returns:
+        Id of the rank that joined last.
+    """
+    if not _v2_api:
+        raise NotImplementedError("Join Op is not supported for PyTorch < 1.0")
+    return mpi_lib.horovod_torch_join(device)

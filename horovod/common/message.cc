@@ -73,6 +73,9 @@ const std::string& Request::RequestType_Name(RequestType value) {
     case RequestType::BROADCAST:
       static const std::string broadcast("BROADCAST");
       return broadcast;
+    case RequestType::JOIN:
+      static const std::string join("JOIN");
+      return join;
     case RequestType::ADASUM:
       static const std::string adasum("ADASUM");
       return adasum;
@@ -240,6 +243,9 @@ const std::string& Response::ResponseType_Name(ResponseType value) {
     case ResponseType::BROADCAST:
       static const std::string broadcast("BROADCAST");
       return broadcast;
+    case ResponseType::JOIN:
+      static const std::string join("JOIN");
+      return join;
     case ResponseType::ADASUM:
       static const std::string adasum("ADASUM");
       return adasum;
@@ -263,6 +269,10 @@ void Response::set_response_type(ResponseType value) {
 const std::vector<std::string>& Response::tensor_names() const {
   return tensor_names_;
 }
+
+DataType Response::tensor_type() const { return tensor_type_; }
+
+void Response::set_tensor_type(DataType value) { tensor_type_ = value; }
 
 const std::string Response::tensor_names_string() const {
   std::string result;
@@ -328,6 +338,7 @@ void Response_ParseFromWire(Response& response,
   for (const auto& tensor_name_obj : *obj->tensor_names()) {
     response.add_tensor_name(tensor_name_obj->str());
   }
+  response.set_tensor_type((DataType) obj->tensor_type());
   response.set_error_message(obj->error_message()->str());
   response.set_devices(
       std::vector<int32_t>(obj->devices()->begin(), obj->devices()->end()));
@@ -354,6 +365,8 @@ void Response_SerializeToWire(const Response& response,
   response_builder.add_response_type(
       (wire::ResponseType) response.response_type());
   response_builder.add_tensor_names(tensor_names_wire);
+  response_builder.add_tensor_type(
+      (wire::DataType) response.tensor_type());
   response_builder.add_error_message(error_message_wire);
   response_builder.add_devices(devices_wire);
   response_builder.add_tensor_sizes(tensor_sizes_wire);

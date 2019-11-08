@@ -97,6 +97,10 @@ def extension_available(ext_base_name, verbose=False):
     return _check_extension_lambda(
         ext_base_name, available_fn, 'built', verbose) or False
 
+def gpu_available(ext_base_name, verbose=False):
+    available_fn = lambda ext: ext._check_has_gpu()
+    return _check_extension_lambda(
+        ext_base_name, available_fn, 'running with GPU', verbose) or False
 
 def mpi_built(verbose=False):
     for ext_base_name in EXTENSIONS:
@@ -191,3 +195,11 @@ def get_average_backwards_compatibility_fun(reduce_ops):
         else:
             return reduce_ops.Average
     return impl
+
+def num_rank_is_power_2(num_rank):
+    """
+    Tests if the given number of ranks is of power of 2. This check is required
+    for Adasum allreduce.
+    TODO support non-power of 2 ranks.
+    """
+    return num_rank != 0 and ((num_rank & (num_rank -1)) == 0)

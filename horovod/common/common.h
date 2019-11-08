@@ -97,6 +97,9 @@ namespace common {
 // Device ID used for CPU.
 #define CPU_DEVICE_ID (-1)
 
+// Temporary tensor name for ranks that did Join().
+#define JOIN_TENSOR_NAME "join.noname"
+
 // List of supported frameworks.
 enum Framework { TENSORFLOW, PYTORCH, MXNET };
 
@@ -212,6 +215,8 @@ public:
   AllocatePersistent(int64_t size,
                      std::shared_ptr<PersistentBuffer>* tensor) = 0;
   virtual Status AllocateOutput(TensorShape shape,
+                                std::shared_ptr<Tensor>* tensor) = 0;
+  virtual Status AllocateZeros(int64_t num_elements, DataType dtype,
                                 std::shared_ptr<Tensor>* tensor) = 0;
   virtual Framework framework() const = 0;
   virtual ~OpContext() = default;
