@@ -151,11 +151,13 @@ OperationManager* CreateOperationManager(HorovodGlobalState& state) {
 #if HAVE_MPI && HAVE_CUDA
   if (mpi_context.IsEnabled()) {
 #if HOROVOD_GPU_ALLREDUCE == 'M'
+    adasum_ops.push_back(std::shared_ptr<AllreduceOp>(new AdasumMPICudaAllreduceOp(&mpi_context, &cuda_context, &state)));
+
     allreduce_ops.push_back(std::shared_ptr<AllreduceOp>(
         new MPI_CUDAAllreduce(&mpi_context, &cuda_context, &state)));
 
 #elif HAVE_NCCL && HOROVOD_GPU_ALLREDUCE == 'N'
-    adasum_ops.push_back(std::shared_ptr<AllreduceOp>(new AdasumCudaAllreduceOp(&mpi_context, &nccl_context, &cuda_context, &state)));
+    adasum_ops.push_back(std::shared_ptr<AllreduceOp>(new AdasumNCCLHierarchicalAllreduceOp(&mpi_context, &nccl_context, &cuda_context, &state)));
 
     allreduce_ops.push_back(
         std::shared_ptr<AllreduceOp>(new NCCLHierarchicalAllreduce(

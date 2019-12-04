@@ -18,7 +18,7 @@
 namespace horovod {
 namespace common {
 
-AdasumCudaAllreduceOp::AdasumCudaAllreduceOp(MPIContext* mpi_context,
+AdasumNCCLHierarchicalAllreduceOp::AdasumNCCLHierarchicalAllreduceOp(MPIContext* mpi_context,
                                              NCCLContext* nccl_context,
                                              CUDAContext* cuda_context,
                                              HorovodGlobalState* global_state)
@@ -30,12 +30,12 @@ AdasumCudaAllreduceOp::AdasumCudaAllreduceOp(MPIContext* mpi_context,
   cuda_op_context_.host_buffer = (uint8_t*)malloc(current_host_buffer_length);
 }
 
-AdasumCudaAllreduceOp::~AdasumCudaAllreduceOp() {
+AdasumNCCLHierarchicalAllreduceOp::~AdasumNCCLHierarchicalAllreduceOp() {
   if (cuda_op_context_.host_buffer != nullptr) {
     free(cuda_op_context_.host_buffer);
   }
 }
-Status AdasumCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries,
+Status AdasumNCCLHierarchicalAllreduceOp::Execute(std::vector<TensorTableEntry>& entries,
                                       const Response& response) {
   if (entries.empty()) {
     return Status::OK();
@@ -48,13 +48,13 @@ Status AdasumCudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries,
   return NcclHierarchical(entries, response);
 }
 
-uint8_t* AdasumCudaAllreduceOp::GetHostBuffer(uint64_t buffer_length) {
+uint8_t* AdasumNCCLHierarchicalAllreduceOp::GetHostBuffer(uint64_t buffer_length) {
   return CheckBufferAndReallocate((uint8_t**)&cuda_op_context_.host_buffer,
                                   buffer_length, current_host_buffer_length);
 }
 
 Status
-AdasumCudaAllreduceOp::NcclHierarchical(std::vector<TensorTableEntry>& entries,
+AdasumNCCLHierarchicalAllreduceOp::NcclHierarchical(std::vector<TensorTableEntry>& entries,
                                         const Response& response) {
   auto& first_entry = entries[0];
 
@@ -304,14 +304,14 @@ AdasumCudaAllreduceOp::NcclHierarchical(std::vector<TensorTableEntry>& entries,
   return cuda_op_context_.FinalizeCUDAQueue(entries, false);
 }
 
-void AdasumCudaAllreduceOp::PopulateNCCLCommStrategy(
+void AdasumNCCLHierarchicalAllreduceOp::PopulateNCCLCommStrategy(
     int& nccl_rank, int& nccl_size, Communicator& nccl_id_bcast_comm) {
   nccl_rank = global_state_->controller->GetLocalRank();
   nccl_size = global_state_->controller->GetLocalSize();
   nccl_id_bcast_comm = Communicator::LOCAL;
 }
 
-bool AdasumCudaAllreduceOp::Enabled(
+bool AdasumNCCLHierarchicalAllreduceOp::Enabled(
     const ParameterManager& param_manager,
     const std::vector<TensorTableEntry>& entries,
     const Response& response) const {

@@ -36,14 +36,12 @@ template <typename Communicator_type> class Adasum {
 public:
   Adasum(HorovodGlobalState* global_state) {
     // Allocate receive buffer size equal to the fusion buffer length
-    current_recv_buffer_length =
-        global_state->parameter_manager.TensorFusionThresholdBytes();
-    recv_buffer_ = (uint8_t*)malloc(current_recv_buffer_length);
+    GetRecvBuffer(global_state->parameter_manager.TensorFusionThresholdBytes());
   };
 
   ~Adasum() {
     if (recv_buffer_ != nullptr) {
-      free(recv_buffer_);
+      FreeBuffer(&recv_buffer_);
     }
   }
 
@@ -148,12 +146,18 @@ protected:
     return *buffer;
   }
 
+  // Free previously alloated buffer
+  virtual void FreeBuffer(uint8_t** buffer) {
+    free(*buffer);
+    *buffer = nullptr;
+  }
+
 private:
   // Temp buffer used by Adasum operations
   uint8_t* recv_buffer_ = nullptr;
 
   // Keep track of current recv buffer length
-  uint64_t current_recv_buffer_length;
+  uint64_t current_recv_buffer_length = 0;
 
   // Perform Adasum allreduce using a vector-halving, distance-doubling (VHDD)
   // approach. grad_buffer: holds the data to reduce and will hold the result.

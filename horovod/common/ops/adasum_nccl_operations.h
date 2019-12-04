@@ -23,13 +23,13 @@
 namespace horovod {
 namespace common {
 
-class AdasumCudaAllreduceOp : public AdasumMPI, public NCCLAllreduce {
+class AdasumNCCLHierarchicalAllreduceOp : public AdasumMPI, public NCCLAllreduce {
 public:
-  AdasumCudaAllreduceOp(MPIContext* mpi_context, NCCLContext* nccl_context,
+  AdasumNCCLHierarchicalAllreduceOp(MPIContext* mpi_context, NCCLContext* nccl_context,
                         CUDAContext* cuda_context,
                         HorovodGlobalState* global_state);
 
-  ~AdasumCudaAllreduceOp();
+  ~AdasumNCCLHierarchicalAllreduceOp();
 
   bool Enabled(const ParameterManager& param_manager,
                const std::vector<TensorTableEntry>& entries,
