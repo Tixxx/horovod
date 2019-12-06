@@ -54,13 +54,14 @@
 #include "ops/cuda_operations.h"
 #if HAVE_MPI
 #include "ops/mpi_cuda_operations.h"
+#include "ops/adasum_mpi_cuda_operations.h"
 #endif
 #endif
 
 #if HAVE_NCCL
 #include "ops/nccl_operations.h"
 #if HAVE_MPI
-#include "ops/adasum_cuda_operations.h"
+#include "ops/adasum_nccl_operations.h"
 #endif
 #endif
 

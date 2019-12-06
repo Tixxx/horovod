@@ -42,6 +42,7 @@ public:
   ~Adasum() {
     if (recv_buffer_ != nullptr) {
       FreeBuffer(&recv_buffer_);
+      current_recv_buffer_length = 0;
     }
   }
 

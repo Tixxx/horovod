@@ -13,7 +13,7 @@
 // limitations under the License.
 // =============================================================================
 
-#include "adasum_mpi_operations.h"
+#include "adasum_mpi_cuda_operations.h"
 
 namespace horovod {
 namespace common {
@@ -43,7 +43,7 @@ bool AdasumMPICudaAllreduceOp::Enabled(const ParameterManager& param_manager,
 
 uint8_t* AdasumMPICudaAllreduceOp::CheckBufferAndReallocate(uint8_t** buffer,
                                           uint64_t buffer_length,
-                                          uint64_t& current_length) override {
+                                          uint64_t& current_length) {
   if (buffer_length <= current_length) {
     return *buffer;
   }
@@ -51,26 +51,15 @@ uint8_t* AdasumMPICudaAllreduceOp::CheckBufferAndReallocate(uint8_t** buffer,
     cudaFree(*buffer);
   }
   cuda_context_->ErrorCheck("cudaMalloc",
-    cudaMalloc((void**)buffer, buffer_length);)
+    cudaMalloc((void**)buffer, buffer_length));
   current_length = buffer_length;
   return *buffer;
 }
 
-virtual void FreeBuffer(uint8_t** buffer) {
-  free(*buffer);
+void AdasumMPICudaAllreduceOp::FreeBuffer(uint8_t** buffer) {
+  cuda_context_->ErrorCheck("cudaFree",
+    cudaFree(*buffer));
   *buffer = nullptr;
-  current_recv_buffer_length = 0;
-}
-
-void AdasumMPICudaAllreduceOp::InitDeviceVariables() {
-  if (device_normsq_a == nullptr) {
-    cuda_context_->ErrorCheck("cudaMalloc",
-      cudaMalloc(&device_normsq_a, sizeof(double)));
-    cuda_context_->ErrorCheck("cudaMalloc",
-      cudaMalloc(&device_normsq_b, sizeof(double)));
-    cuda_context_->ErrorCheck("cudaMalloc",
-      cudaMalloc(&device_dot, sizeof(double)));
-  }
 }
 
 Status AdasumMPICudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries,
@@ -111,7 +100,7 @@ Status AdasumMPICudaAllreduceOp::Execute(std::vector<TensorTableEntry>& entries,
                                          (size_t) first_entry.tensor->size(), cudaMemcpyDeviceToDevice,
                                          cuda_context_->streams[global_state_->current_nccl_stream][first_entry.device]);
       cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
-      auto cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][first_entry.device]);
+      cuda_result = cudaStreamSynchronize(cuda_context_->streams[global_state_->current_nccl_stream][first_entry.device]);
       cuda_context_->ErrorCheck("cudaStreamSynchronize", cuda_result);
     }
   }
@@ -162,7 +151,7 @@ void AdasumMPICudaAllreduceOp::DispatchComputeDotAndNormSqrds(const void* __rest
     CudaDotProductImpl(count, (double*)a, (double*)b, device_normsq_a, device_normsq_b, device_dot, anormsq, bnormsq, dotProduct);
   }
   else {
-      throw std::logic_error("Unsupported data type.");
+    throw std::logic_error("Unsupported data type.");
   }
 }
 
@@ -180,7 +169,18 @@ void AdasumMPICudaAllreduceOp::DispatchScaledAdd(DataType horovod_datatype, int 
     CudaScaleAddImpl(count, (double*)a, (double*)b, acoeff, bcoeff);
   }
   else {
-      throw std::logic_error("Unsupported data type.");
+    throw std::logic_error("Unsupported data type.");
+  }
+}
+
+void AdasumMPICudaAllreduceOp::InitDeviceVariables() {
+  if (device_normsq_a == nullptr) {
+    cuda_context_->ErrorCheck("cudaMalloc",
+      cudaMalloc(&device_normsq_a, sizeof(double)));
+    cuda_context_->ErrorCheck("cudaMalloc",
+      cudaMalloc(&device_normsq_b, sizeof(double)));
+    cuda_context_->ErrorCheck("cudaMalloc",
+      cudaMalloc(&device_dot, sizeof(double)));
   }
 }
 } // namespace common

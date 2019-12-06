@@ -13,8 +13,8 @@
 // limitations under the License.
 // =============================================================================
 
-#ifndef HOROVOD_ADASUM_CUDA_OPERATIONS_H
-#define HOROVOD_ADASUM_CUDA_OPERATIONS_H
+#ifndef HOROVOD_ADASUM_NCCL_OPERATIONS_H
+#define HOROVOD_ADASUM_NCCL_OPERATIONS_H
 
 #include "adasum/adasum_mpi.h"
 #include "nccl_operations.h"
@@ -53,4 +53,4 @@ private:
 };
 } // namespace common
 } // namespace horovod
-#endif // HOROVOD_ADASUM_CUDA_OPERATIONS_H
+#endif // HOROVOD_ADASUM_NCCL_OPERATIONS_H

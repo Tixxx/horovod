@@ -13,8 +13,8 @@
 // limitations under the License.
 // =============================================================================
 
-#ifndef HOROVOD_ADASUM_MPI_OPERATIONS_H
-#define HOROVOD_ADASUM_MPI_OPERATIONS_H
+#ifndef HOROVOD_ADASUM_MPI_CUDA_OPERATIONS_H
+#define HOROVOD_ADASUM_MPI_CUDA_OPERATIONS_H
 
 #include "mpi.h"
 #include <iostream>
@@ -39,7 +39,7 @@ public:
                                     uint64_t buffer_length,
                                     uint64_t& current_length) override;
 
-  void InitDeviceVariables();
+  void FreeBuffer(uint8_t** buffer) override;
 
   bool Enabled(const ParameterManager& param_manager,
                const std::vector<TensorTableEntry>& entries,
@@ -55,12 +55,15 @@ public:
   void DispatchScaledAdd(DataType horovod_datatype, int count,
                          double acoeff, void* __restrict__ a,
                          double bcoeff, void* __restrict__ b,
-                         int layerid) override; };
+                         int layerid) override;
 private:
+  void InitDeviceVariables();
+
   double* device_normsq_a;
   double* device_normsq_b;
   double* device_dot;
+};
 } // namespace common
 } // namespace horovod
 
-#endif // HOROVOD_ADASUM_MPI_OPERATIONS_H
+#endif // HOROVOD_ADASUM_MPI_CUDA_OPERATIONS_H
