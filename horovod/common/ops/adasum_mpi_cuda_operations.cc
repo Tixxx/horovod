@@ -141,6 +141,12 @@ void AdasumMPICudaAllreduceOp::DispatchComputeDotAndNormSqrds(const void* __rest
                                                               int count, double& dotProduct,
                                                               double& anormsq, double& bnormsq,
                                                               int layerid) {
+  if (count == 0) {
+    dotProduct = 0;
+    anormsq = 0;
+    bnormsq = 0;
+    return;
+  }
   if (horovod_datatype == DataType::HOROVOD_FLOAT16) {
     CudaDotProductImpl(count, (uint16_t*)a, (uint16_t*)b, device_normsq_a, device_normsq_b, device_dot, anormsq, bnormsq, dotProduct);
   }
@@ -159,6 +165,9 @@ void AdasumMPICudaAllreduceOp::DispatchScaledAdd(DataType horovod_datatype, int 
                                                  double acoeff, void* __restrict__ a,
                                                  double bcoeff, void* __restrict__ b,
                                                  int layerid) {
+  if (count == 0) {
+    return;
+  }
   if (horovod_datatype == DataType::HOROVOD_FLOAT16) {
     CudaScaleAddImpl(count, (uint16_t*)a, (uint16_t*)b, acoeff, bcoeff);
   }
