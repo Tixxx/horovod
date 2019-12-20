@@ -13,7 +13,7 @@
 // limitations under the License.
 // =============================================================================
 
-#include "adasum_cuda_operations.h"
+#include "adasum_nccl_operations.h"
 
 namespace horovod {
 namespace common {

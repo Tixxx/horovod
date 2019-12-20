@@ -19,7 +19,9 @@ namespace horovod {
 namespace common {
 AdasumMPICudaAllreduceOp::AdasumMPICudaAllreduceOp(MPIContext* mpi_context, CUDAContext* context,
                                            HorovodGlobalState* global_state)
-    : AdasumMPI(mpi_context, global_state), CUDAAllreduce(context, global_state) {}
+    : AdasumMPI(mpi_context, global_state), CUDAAllreduce(context, global_state) {
+      GetRecvBuffer(global_state->parameter_manager.TensorFusionThresholdBytes());
+    }
 
 AdasumMPICudaAllreduceOp::~AdasumMPICudaAllreduceOp() {
   if (device_normsq_a != nullptr) {

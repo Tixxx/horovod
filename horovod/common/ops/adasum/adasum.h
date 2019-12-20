@@ -36,15 +36,15 @@ template <typename Communicator_type> class Adasum {
 public:
   Adasum(HorovodGlobalState* global_state) {
     // Allocate receive buffer size equal to the fusion buffer length
-    GetRecvBuffer(global_state->parameter_manager.TensorFusionThresholdBytes());
+    // GetRecvBuffer(global_state->parameter_manager.TensorFusionThresholdBytes());
   };
 
   ~Adasum() {
-    if (recv_buffer_ != nullptr) {
-      FreeBuffer(&recv_buffer_);
-      current_recv_buffer_length = 0;
+    // if (recv_buffer_ != nullptr) {
+    //   FreeBuffer(&recv_buffer_);
+    //   current_recv_buffer_length = 0;
+    // }
     }
-  }
 
 protected:
   // Communication primitives required for Adasum algorithm

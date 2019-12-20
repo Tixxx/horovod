@@ -35,12 +35,6 @@ public:
   Status Execute(std::vector<TensorTableEntry>& entries,
                  const Response& response) override;
 
-  uint8_t* CheckBufferAndReallocate(uint8_t** buffer,
-                                    uint64_t buffer_length,
-                                    uint64_t& current_length) override;
-
-  void FreeBuffer(uint8_t** buffer) override;
-
   bool Enabled(const ParameterManager& param_manager,
                const std::vector<TensorTableEntry>& entries,
                const Response& response) const override;
@@ -56,6 +50,12 @@ public:
                          double acoeff, void* __restrict__ a,
                          double bcoeff, void* __restrict__ b,
                          int layerid) override;
+protected:
+  uint8_t* CheckBufferAndReallocate(uint8_t** buffer,
+                                    uint64_t buffer_length,
+                                    uint64_t& current_length) override;
+
+  void FreeBuffer(uint8_t** buffer) override;
 private:
   void InitDeviceVariables();
 
