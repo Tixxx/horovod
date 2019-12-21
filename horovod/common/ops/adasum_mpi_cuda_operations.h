@@ -59,9 +59,7 @@ protected:
 private:
   void InitDeviceVariables();
 
-  double* device_normsq_a = nullptr;
-  double* device_normsq_b = nullptr;
-  double* device_dot = nullptr;
+  double* device_vals = nullptr;
 };
 } // namespace common
 } // namespace horovod

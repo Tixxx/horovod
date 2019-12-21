@@ -19,21 +19,13 @@ namespace horovod {
 namespace common {
 AdasumMPICudaAllreduceOp::AdasumMPICudaAllreduceOp(MPIContext* mpi_context, CUDAContext* context,
                                            HorovodGlobalState* global_state)
-    : AdasumMPI(mpi_context, global_state), CUDAAllreduce(context, global_state) {
-      GetRecvBuffer(global_state->parameter_manager.TensorFusionThresholdBytes());
-    }
+    : AdasumMPI(mpi_context, global_state), CUDAAllreduce(context, global_state) {}
 
 AdasumMPICudaAllreduceOp::~AdasumMPICudaAllreduceOp() {
-  if (device_normsq_a != nullptr) {
+  if (device_vals != nullptr) {
     cuda_context_->ErrorCheck("cudaFree",
-      cudaFree(device_normsq_a));
-    cuda_context_->ErrorCheck("cudaFree",
-      cudaFree(device_normsq_b));
-    cuda_context_->ErrorCheck("cudaFree",
-      cudaFree(device_dot));
-    device_normsq_a = nullptr;
-    device_normsq_b = nullptr;
-    device_dot = nullptr;
+      cudaFree(device_vals));
+    device_vals = nullptr;
   }
 }
 
@@ -150,13 +142,13 @@ void AdasumMPICudaAllreduceOp::DispatchComputeDotAndNormSqrds(const void* __rest
     return;
   }
   if (horovod_datatype == DataType::HOROVOD_FLOAT16) {
-    CudaDotProductImpl(count, (uint16_t*)a, (uint16_t*)b, device_normsq_a, device_normsq_b, device_dot, anormsq, bnormsq, dotProduct);
+    CudaDotProductImpl(count, (uint16_t*)a, (uint16_t*)b, device_vals, anormsq, bnormsq, dotProduct);
   }
   else if (horovod_datatype == DataType::HOROVOD_FLOAT32) {
-    CudaDotProductImpl(count, (float*)a, (float*)b, device_normsq_a, device_normsq_b, device_dot, anormsq, bnormsq, dotProduct);
+    CudaDotProductImpl(count, (float*)a, (float*)b, device_vals, anormsq, bnormsq, dotProduct);
   }
   else if (horovod_datatype == DataType::HOROVOD_FLOAT64) {
-    CudaDotProductImpl(count, (double*)a, (double*)b, device_normsq_a, device_normsq_b, device_dot, anormsq, bnormsq, dotProduct);
+    CudaDotProductImpl(count, (double*)a, (double*)b, device_vals, anormsq, bnormsq, dotProduct);
   }
   else {
     throw std::logic_error("Unsupported data type.");
@@ -185,13 +177,9 @@ void AdasumMPICudaAllreduceOp::DispatchScaledAdd(DataType horovod_datatype, int 
 }
 
 void AdasumMPICudaAllreduceOp::InitDeviceVariables() {
-  if (device_normsq_a == nullptr) {
+  if (device_vals == nullptr) {
     cuda_context_->ErrorCheck("cudaMalloc",
-      cudaMalloc(&device_normsq_a, sizeof(double)));
-    cuda_context_->ErrorCheck("cudaMalloc",
-      cudaMalloc(&device_normsq_b, sizeof(double)));
-    cuda_context_->ErrorCheck("cudaMalloc",
-      cudaMalloc(&device_dot, sizeof(double)));
+      cudaMalloc(&device_vals, 3*sizeof(double)));
   }
 }
 } // namespace common

@@ -23,7 +23,7 @@
 
 template<typename T, typename TACC>
 __global__
-void CudaDotProductKernel(int count, const T* a, const T* b, TACC* out_normsq_a, TACC* out_normsq_b, TACC* out_dot) {
+void CudaDotProductKernel(int count, const T* a, const T* b, TACC* out) {
 	__shared__ TACC normsq_a[THREADS_PER_BLOCK];
 	__shared__ TACC normsq_b[THREADS_PER_BLOCK];
 	__shared__ TACC dot[THREADS_PER_BLOCK];
@@ -45,9 +45,9 @@ void CudaDotProductKernel(int count, const T* a, const T* b, TACC* out_normsq_a,
 				dot_sum += dot[i];
 			}
 		}
-		atomicAdd(out_normsq_a, normsq_a_sum);
-		atomicAdd(out_normsq_b, normsq_b_sum);
-		atomicAdd(out_dot, dot_sum);
+		atomicAdd(out, normsq_a_sum);
+		atomicAdd(out+1, normsq_b_sum);
+		atomicAdd(out+2, dot_sum);
 	}
 }
 
@@ -76,51 +76,51 @@ void ErrorCheck(std::string op_name, cudaError_t cuda_result) {
 }
 
 void CudaDotProductImpl(int count, const double* device_a, const double* device_b, 
-	double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
+	double* device_vals, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
 	
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_normsq_a, &host_normsq_a, sizeof(double), cudaMemcpyHostToDevice));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_normsq_b, &host_normsq_b, sizeof(double), cudaMemcpyHostToDevice));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_dot, &host_dot, sizeof(double), cudaMemcpyHostToDevice));
+	ErrorCheck("cudaMemset", cudaMemset(device_vals, 0, 3*sizeof(double)));
 
 	CudaDotProductKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,
-		THREADS_PER_BLOCK>>>(count, device_a, device_b, device_normsq_a, device_normsq_b, device_dot);
+		THREADS_PER_BLOCK>>>(count, device_a, device_b, device_vals);
 	ErrorCheck("CudaDotProductKernel(double)", cudaGetLastError());
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_normsq_a, device_normsq_a, sizeof(double), cudaMemcpyDeviceToHost));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_normsq_b, device_normsq_b, sizeof(double), cudaMemcpyDeviceToHost));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_dot, device_dot, sizeof(double), cudaMemcpyDeviceToHost));
 
+	double host_vals[3];
+	ErrorCheck("cudaMemcpy", cudaMemcpy(host_vals, device_vals, 3*sizeof(double), cudaMemcpyDeviceToHost));
+	host_normsq_a = vals[0];
+	host_normsq_b = vals[1];
+	host_dot = vals[2];
 }
 
 void CudaDotProductImpl(int count, const float* device_a, const float* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
+	double* device_vals, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
 	
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_normsq_a, &host_normsq_a, sizeof(double), cudaMemcpyHostToDevice));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_normsq_b, &host_normsq_b, sizeof(double), cudaMemcpyHostToDevice));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_dot, &host_dot, sizeof(double), cudaMemcpyHostToDevice));
+	ErrorCheck("cudaMemset", cudaMemset(device_vals, 0, 3*sizeof(double)));
 
 	CudaDotProductKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,
-		THREADS_PER_BLOCK>>>(count, device_a, device_b, device_normsq_a, device_normsq_b, device_dot);
+		THREADS_PER_BLOCK>>>(count, device_a, device_b, device_vals);
 	ErrorCheck("CudaDotProductKernel(float)", cudaGetLastError());
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_normsq_a, device_normsq_a, sizeof(double), cudaMemcpyDeviceToHost));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_normsq_b, device_normsq_b, sizeof(double), cudaMemcpyDeviceToHost));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_dot, device_dot, sizeof(double), cudaMemcpyDeviceToHost));
 
+	double host_vals[3];
+	ErrorCheck("cudaMemcpy", cudaMemcpy(host_vals, device_vals, 3*sizeof(double), cudaMemcpyDeviceToHost));
+	host_normsq_a = vals[0];
+	host_normsq_b = vals[1];
+	host_dot = vals[2];
 }
 
 void CudaDotProductImpl(int count, const uint16_t* device_a, const uint16_t* device_b, 
-	double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
+	double* device_vals, double& host_normsq_a, double& host_normsq_b, double& host_dot) {
 	
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_normsq_a, &host_normsq_a, sizeof(double), cudaMemcpyHostToDevice));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_normsq_b, &host_normsq_b, sizeof(double), cudaMemcpyHostToDevice));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(device_dot, &host_dot, sizeof(double), cudaMemcpyHostToDevice));
+	ErrorCheck("cudaMemset", cudaMemset(device_vals, 0, 3*sizeof(double)));
 
 	CudaDotProductKernel<<<(count+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK,
-		THREADS_PER_BLOCK>>>(count, (__half*) device_a, (__half*) device_b, device_normsq_a, device_normsq_b, device_dot);
+		THREADS_PER_BLOCK>>>(count, (__half*) device_a, (__half*) device_b, device_vals);
 	ErrorCheck("CudaDotProductKernel(fp16)", cudaGetLastError());
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_normsq_a, device_normsq_a, sizeof(double), cudaMemcpyDeviceToHost));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_normsq_b, device_normsq_b, sizeof(double), cudaMemcpyDeviceToHost));
-	ErrorCheck("cudaMemcpy", cudaMemcpy(&host_dot, device_dot, sizeof(double), cudaMemcpyDeviceToHost));
 
+	double host_vals[3];
+	ErrorCheck("cudaMemcpy", cudaMemcpy(host_vals, device_vals, 3*sizeof(double), cudaMemcpyDeviceToHost));
+	host_normsq_a = vals[0];
+	host_normsq_b = vals[1];
+	host_dot = vals[2];
 }
 
 void CudaScaleAddImpl(int count, double* a_device, const double* b_device, double host_a_coeff, double host_b_coeff) {

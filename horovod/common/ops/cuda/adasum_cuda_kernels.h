@@ -15,13 +15,13 @@
 
 #include <stdint.h>
 void CudaDotProductImpl(int count, const double* device_a, const double* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot);
+						double* device_vals, double& host_normsq_a, double& host_normsq_b, double& host_dot);
 
 void CudaDotProductImpl(int count, const float* device_a, const float* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot);
+						double* device_vals, double& host_normsq_a, double& host_normsq_b, double& host_dot);
 
 void CudaDotProductImpl(int count, const uint16_t* device_a, const uint16_t* device_b, 
-						double* device_normsq_a, double* device_normsq_b, double* device_dot, double& host_normsq_a, double& host_normsq_b, double& host_dot);
+						double* device_vals, double& host_normsq_a, double& host_normsq_b, double& host_dot);
 
 void CudaScaleAddImpl(int count, double* a_device, const double* b_device, double host_a_coeff, double host_b_coeff);
 
