@@ -86,9 +86,9 @@ void CudaDotProductImpl(int count, const double* device_a, const double* device_
 
 	double host_vals[3];
 	ErrorCheck("cudaMemcpy", cudaMemcpy(host_vals, device_vals, 3*sizeof(double), cudaMemcpyDeviceToHost));
-	host_normsq_a = vals[0];
-	host_normsq_b = vals[1];
-	host_dot = vals[2];
+	host_normsq_a = host_vals[0];
+	host_normsq_b = host_vals[1];
+	host_dot = host_vals[2];
 }
 
 void CudaDotProductImpl(int count, const float* device_a, const float* device_b, 
@@ -102,9 +102,9 @@ void CudaDotProductImpl(int count, const float* device_a, const float* device_b,
 
 	double host_vals[3];
 	ErrorCheck("cudaMemcpy", cudaMemcpy(host_vals, device_vals, 3*sizeof(double), cudaMemcpyDeviceToHost));
-	host_normsq_a = vals[0];
-	host_normsq_b = vals[1];
-	host_dot = vals[2];
+	host_normsq_a = host_vals[0];
+	host_normsq_b = host_vals[1];
+	host_dot = host_vals[2];
 }
 
 void CudaDotProductImpl(int count, const uint16_t* device_a, const uint16_t* device_b, 
@@ -118,9 +118,9 @@ void CudaDotProductImpl(int count, const uint16_t* device_a, const uint16_t* dev
 
 	double host_vals[3];
 	ErrorCheck("cudaMemcpy", cudaMemcpy(host_vals, device_vals, 3*sizeof(double), cudaMemcpyDeviceToHost));
-	host_normsq_a = vals[0];
-	host_normsq_b = vals[1];
-	host_dot = vals[2];
+	host_normsq_a = host_vals[0];
+	host_normsq_b = host_vals[1];
+	host_dot = host_vals[2];
 }
 
 void CudaScaleAddImpl(int count, double* a_device, const double* b_device, double host_a_coeff, double host_b_coeff) {
