@@ -19,16 +19,20 @@ from __future__ import division
 from __future__ import print_function
 
 from distutils.version import LooseVersion
+
 import collections
 import inspect
 import itertools
-import numpy as np
 import os
+import pytest
 import tempfile
-import torch
-import torch.nn.functional as F
 import unittest
 import warnings
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 import horovod.torch as hvd
 
@@ -37,8 +41,10 @@ from common import mpi_env_rank_and_size
 _v2_api = LooseVersion(torch.__version__) >= LooseVersion('1.0.0')
 _fp16_supported = _v2_api
 
-# MLSL supports only byte, float and double data types
-mlsl_supported_types = set([torch.FloatTensor, torch.DoubleTensor])
+ccl_supported_types = set([torch.CharTensor, torch.IntTensor,
+                           torch.LongTensor, torch.FloatTensor, 
+                           torch.DoubleTensor])
+
 
 class TorchTests(unittest.TestCase):
     """
@@ -66,9 +72,29 @@ class TorchTests(unittest.TestCase):
         return tensor.type(dtype)
 
     def filter_supported_types(self, types):
-        if 'MLSL_ROOT' in os.environ:
-           types = [t for t in types if t in mlsl_supported_types]
+        if 'CCL_ROOT' in os.environ:
+           types = [t for t in types if t in ccl_supported_types]
         return types
+
+    def test_horovod_reinit(self):
+        """Test that Horovod can init -> shutdown -> init successfully."""
+        mpi_rank, _ = mpi_env_rank_and_size()
+        gloo_rank = int(os.getenv('HOROVOD_RANK', -1))
+
+        is_mpi = gloo_rank == -1
+        if is_mpi:
+            # Only applies for Gloo
+            return
+
+        hvd.init()
+        rank, size = hvd.rank(), hvd.size()
+
+        hvd.shutdown()
+        hvd.init()
+        rank2, size2 = hvd.rank(), hvd.size()
+
+        assert rank == rank2
+        assert size == size2
 
     def test_horovod_rank(self):
         """Test that the rank returned by hvd.rank() is correct."""
@@ -1099,6 +1125,46 @@ class TorchTests(unittest.TestCase):
             loss.backward()
             optimizer.step()
 
+    @pytest.mark.skipif(LooseVersion(torch.__version__) < LooseVersion('0.4.1'),
+                        reason='Cannot optimize parameters that do not require gradients before PyTorch 0.4.1')
+    def test_broadcast_state_no_grad(self):
+        class ModelNoGrad(nn.Module):
+            def __init__(self, a, b):
+                super(ModelNoGrad, self).__init__()
+                self.a = nn.Parameter(a.int(), requires_grad=False)
+                self.b = nn.Parameter(b)
+
+            def forward(self, x):
+                return torch.index_select(self.b, 0, self.a.long()) * x
+
+        hvd.init()
+
+        a = torch.Tensor([1, 3])
+        b = torch.rand(4)
+
+        model = ModelNoGrad(a, b)
+
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
+
+        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+
+        assert optimizer.param_groups[0]['params'][0].grad is None
+        assert torch.all(torch.eq(optimizer.param_groups[0]['params'][1].grad, torch.zeros([4]))).item()
+
+    def test_broadcast_object(self):
+        hvd.init()
+
+        expected_obj = {
+            'hello': 123,
+            0: [1, 2]
+        }
+        obj = expected_obj if hvd.rank() == 0 else {}
+
+        obj = hvd.broadcast_object(obj, root_rank=0)
+        self.assertDictEqual(obj, expected_obj)
+
     def test_compression_fp16(self):
         valid_dtypes = [torch.float32, torch.float64]
         invalid_dtypes = [torch.uint8, torch.int8, torch.int16,
@@ -1487,20 +1553,39 @@ class TorchTests(unittest.TestCase):
                 dtypes += [torch.cuda.HalfTensor]
         dims = [1, 2, 3]
         first_join_ranks = [0, 1]
-        for dtype, dim, first_join_rank in itertools.product(dtypes, dims, first_join_ranks):
+        cachings = [False, True]
+        for dtype, dim, first_join_rank, caching in itertools.product(dtypes, dims, first_join_ranks, cachings):
+            torch.manual_seed(1234)
+
+            # Use two tensors to test fusion
+            tensor_a = torch.FloatTensor(*([5] * dim)).random_(-100, 100)
+            tensor_a = self.cast_and_place(tensor_a, dtype)
+            tensor_b = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
+            tensor_b = self.cast_and_place(tensor_b, dtype)
+
+            if caching:
+                handle_a = hvd.allreduce_async(tensor_a, name="tensor_a", average=True)
+                handle_b = hvd.allreduce_async(tensor_b, name="tensor_b", average=True)
+                averaged_a = hvd.synchronize(handle_a)
+                averaged_b = hvd.synchronize(handle_b)
+
             if rank == first_join_rank:
                 if dtype.is_cuda:
                     ret = hvd.join(hvd.local_rank())
                 else:
                     ret = hvd.join()
             else:
-                torch.manual_seed(1234)
-                tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
-                tensor = self.cast_and_place(tensor, dtype)
-                averaged = hvd.allreduce(tensor, average=True)
-                ret = hvd.join(hvd.local_rank())
+                handle_a = hvd.allreduce_async(tensor_a, name="tensor_a", average=True)
+                handle_b = hvd.allreduce_async(tensor_b, name="tensor_b", average=True)
+                averaged_a = hvd.synchronize(handle_a)
+                averaged_b = hvd.synchronize(handle_b)
+                if dtype.is_cuda:
+                    ret = hvd.join(hvd.local_rank())
+                else:
+                    ret = hvd.join()
 
-                max_difference = averaged.data.sub(tensor * (size - 1) / size).max()
+                max_difference_a = averaged_a.data.sub(tensor_a * (size - 1) / size).max()
+                max_difference_b = averaged_b.data.sub(tensor_b * (size - 1) / size).max()
                 # Threshold for floating point equality depends on number of
                 # ranks, since we're comparing against precise multiplication.
                 if size <= 3 or dtype in [torch.IntTensor, torch.LongTensor,
@@ -1512,7 +1597,8 @@ class TorchTests(unittest.TestCase):
                     threshold = 5e-4
                 else:
                     break
-                assert max_difference <= threshold, 'hovd.join with hvd.allreduce produces incorrect results'
+                assert max_difference_a <= threshold, 'hvd.join with hvd.allreduce produces incorrect results'
+                assert max_difference_b <= threshold, 'hvd.join with hvd.allreduce produces incorrect results'
 
     def test_horovod_join_allgather(self):
         """Test Join op with allgather."""

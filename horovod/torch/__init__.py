@@ -19,7 +19,11 @@ from __future__ import division
 from __future__ import print_function
 
 from contextlib import contextmanager
+
+import io
 import warnings
+
+import cloudpickle
 
 from horovod.common.util import check_extension
 
@@ -30,10 +34,6 @@ except:
     check_extension('horovod.torch', 'HOROVOD_WITH_PYTORCH',
                     __file__, 'mpi_lib', '_mpi_lib')
 
-# Please run this function in a subprocess
-def _check_has_gpu():
-  import torch
-  return torch.cuda.is_available()
 
 from horovod.torch.compression import Compression
 from horovod.torch.mpi_ops import allreduce, allreduce_async, allreduce_, allreduce_async_
@@ -45,11 +45,18 @@ from horovod.torch.mpi_ops import init, shutdown
 from horovod.torch.mpi_ops import size, local_size, rank, local_rank
 from horovod.torch.mpi_ops import mpi_threads_supported, mpi_enabled, mpi_built
 from horovod.torch.mpi_ops import gloo_enabled, gloo_built
-from horovod.torch.mpi_ops import nccl_built, ddl_built, mlsl_built
+from horovod.torch.mpi_ops import nccl_built, ddl_built, ccl_built
 from horovod.torch.mpi_ops import Average, Sum, Adasum
 
 import torch
 import collections
+
+
+# Please run this function in a subprocess
+def _check_has_gpu():
+    import torch
+    return torch.cuda.is_available()
+
 
 class _DistributedOptimizer(torch.optim.Optimizer):
     def __init__(self, params, named_parameters, compression,
@@ -378,6 +385,177 @@ class _DistributedAdasumOptimizer(torch.optim.Optimizer):
                                  "This is prohibited as it can cause a race condition.")
         return super(self.__class__, self).zero_grad()
 
+class _DistributedAdasumOptimizer(torch.optim.Optimizer):
+    def __init__(self, params, named_parameters, compression,
+                 backward_passes_per_step=1):
+        super(self.__class__, self).__init__(params)
+
+        self._compression = compression
+
+        if named_parameters is not None:
+            named_parameters = list(named_parameters)
+        else:
+            named_parameters = [('allreduce.noname.%s' % i, v)
+                                for param_group in self.param_groups
+                                for i, v in enumerate(param_group['params'])]
+
+        # make sure that named_parameters are tuples
+        if any([not isinstance(p, tuple) for p in named_parameters]):
+            raise ValueError('named_parameters should be a sequence of '
+                             'tuples (name, parameter), usually produced by '
+                             'model.named_parameters().')
+
+        dups = _DistributedOptimizer.find_duplicates([k for k, _ in named_parameters])
+        if len(dups) > 0:
+            raise ValueError('Parameter names in named_parameters must be unique. '
+                             'Found duplicates: %s' % ', '.join(dups))
+
+        all_param_ids = {id(v)
+                         for param_group in self.param_groups
+                         for v in param_group['params']}
+        named_param_ids = {id(v) for k, v in named_parameters}
+        unnamed_param_ids = all_param_ids - named_param_ids
+        if len(unnamed_param_ids):
+            raise ValueError('named_parameters was specified, but one or more model '
+                             'parameters were not named. Python object ids: '
+                             '%s' % ', '.join(str(id) for id in unnamed_param_ids))
+
+        self._parameter_names = {v: k for k, v in sorted(named_parameters)}
+        self.backward_passes_per_step = backward_passes_per_step
+        self._allreduce_delay = {v: self.backward_passes_per_step
+                                 for _, v in sorted(named_parameters)}
+        self._handles = {}
+        self._grad_accs = []
+        self._requires_update = set()
+        self._synchronized = False
+        self._should_synchronize = True
+
+        self._starting_models = {
+            p : torch.zeros_like(p, requires_grad=False)
+            for _, p in named_parameters
+        }
+
+        self._register_hooks()
+
+    def set_backward_passes_per_step(self, passes):
+        self.backward_passes_per_step = passes
+        for p in self._allreduce_delay:
+            self._allreduce_delay[p] = self.backward_passes_per_step
+
+    def _register_hooks(self):
+        for param_group in self.param_groups:
+            for p in param_group['params']:
+                if p.requires_grad:
+                    p.grad = p.data.new(p.size()).zero_()
+                    self._requires_update.add(p)
+                    p_tmp = p.expand_as(p)
+                    grad_acc = p_tmp.grad_fn.next_functions[0][0]
+                    grad_acc.register_hook(self._make_hook(p))
+                    self._grad_accs.append(grad_acc)
+
+    def _allreduce_grad_async(self, p):
+        # Delta optimizer implements this logic:
+        #  start = current.copy()
+        #  step() -> computes 'current - \alpha.f(g)' where f is
+        #            optimizer logic and g is the gradient
+        #  delta = current-start
+        #  allreduce_(delta)
+        #  start += delta
+        #  current = start
+        # In order to suppport this logic using function hook to improve performance,
+        # we do:
+        # delta = (start - \alpha.f(g)) - start
+        #       = -\alpha.f(g)
+        # set start to zero and step computes -\alpha.f(g)
+        # where f is the underlying optimizer logic
+
+        name = self._parameter_names.get(p)
+        start = self._starting_models[p]
+    
+        stashed_params = []
+        for group in self.param_groups:
+            stashed_params.append(group['params'])
+            # only want to step on p
+            if any([p is v for v in group['params']]):
+                group['params'] = [p]
+            else:
+                group['params'] = []
+
+        start.data.copy_(p)
+
+        super(self.__class__, self).step()
+
+        # compute delta = curr - start
+        p.data.sub_(start)
+        
+        # allreduce as before
+        tensor_compressed, ctx = self._compression.compress(p)
+        handle = allreduce_async_(tensor_compressed.data, name=name, op=Adasum)
+
+        # reset stashed parameters
+        for stashed, group in zip(stashed_params, self.param_groups):
+            group['params'] = stashed        
+
+        return handle, ctx
+
+    def _make_hook(self, p):
+        def hook(*ignore):
+            if p in self._handles and self._handles[p][0] is not None:
+                if self._allreduce_delay[p] <= 0:
+                    raise AssertionError(
+                        "Gradients were computed more than "
+                        "backward_passes_per_step times before call "
+                        "to step(). Increase backward_passes_per_step to "
+                        "accumulate gradients locally.")
+            assert not p.grad.requires_grad
+            assert self._allreduce_delay[p] > 0
+            handle, ctx = None, None
+            self._allreduce_delay[p] -= 1
+            if self._allreduce_delay[p] == 0:
+                handle, ctx = self._allreduce_grad_async(p)
+            self._handles[p] = (handle, ctx)
+        return hook
+
+    def synchronize(self):
+        pass
+
+    @contextmanager
+    def skip_synchronize(self):
+        raise AssertionError("Skipping synchronization is not supported when using Adasum optimizer.")
+
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+        missing_p = self._requires_update - set(self._handles.keys())
+        for p in missing_p:
+            handle, ctx = self._allreduce_grad_async(p)
+            self._handles[p] = (handle, ctx)
+
+        for p, (handle, ctx) in self._handles.items():
+            # This means step() is called before backward_passes_per_steps finished.
+            # We do a synchoronous allreduce here.
+            if not handle:
+                handle, ctx = self._allreduce_grad_async(p)
+                self._handles[p] = (handle, ctx)
+            delta = synchronize(handle)
+            delta = self._compression.decompress(delta, ctx)            
+            start = self._starting_models[p]
+            start.data.add_(delta.data)
+            p.data.copy_(start)
+            self._allreduce_delay[p] = self.backward_passes_per_step
+        self._handles.clear()
+        return loss
+
+    def zero_grad(self):
+        if self._handles:
+            raise AssertionError("optimizer.zero_grad() was called after loss.backward() "
+                                 "but before optimizer.step() or optimizer.synchronize(). "
+                                 "This is prohibited as it can cause a race condition.")
+        return super(self.__class__, self).zero_grad()
+
+
 def DistributedOptimizer(optimizer, named_parameters=None,
                          compression=Compression.none,
                          backward_passes_per_step=1,
@@ -488,7 +666,8 @@ def broadcast_optimizer_state(optimizer, root_rank):
     if len(state_dict['state']) == 0:
         for group in optimizer.param_groups:
             for p in group['params']:
-                p.grad = p.data.new(p.size()).zero_()
+                if p.requires_grad and id(p) not in state_dict['state']:
+                    p.grad = p.data.new(p.size()).zero_()
         # This function accepts a torch.optim.Optimizer or a DistributedOptimizer
         # wrapped around a torch optimizer. Calling step() with a DistributedOptimizer
         # forces allreduce on all model parameters, which will result in deadlock
@@ -579,7 +758,50 @@ def broadcast_optimizer_state(optimizer, root_rank):
     # Synchronized broadcast of all parameters
     broadcast_parameters(params, root_rank)
 
-    # Post-broadcast clenaup for non-tensor parameters
+    # Post-broadcast cleanup for non-tensor parameters
     for key, p in params:
         if key in callbacks:
             callbacks[key]()
+
+
+def broadcast_object(obj, root_rank, name=None):
+    """
+    Serializes and broadcasts an object from root rank to all other processes.
+    Typical usage is to broadcast the `optimizer.state_dict()`, for example:
+
+    .. code-block:: python
+
+        state_dict = broadcast_object(optimizer.state_dict(), 0)
+        if hvd.rank() > 0:
+            optimizer.load_state_dict(state_dict)
+
+    Arguments:
+        obj: An object capable of being serialized without losing any context.
+        root_rank: The rank of the process from which parameters will be
+                   broadcasted to all other processes.
+        name: Optional name to use during broadcast, will default to the class
+              type.
+    Returns:
+        The object that was broadcast from the `root_rank`.
+    """
+    if name is None:
+        name = str(type(obj))
+
+    if rank() == root_rank:
+        b = io.BytesIO()
+        cloudpickle.dump(obj, b)
+        t = torch.ByteTensor(bytearray(b.getvalue()))
+        sz = torch.IntTensor([t.shape[0]])
+        broadcast_(sz, root_rank, name + '.sz')
+    else:
+        sz = torch.IntTensor([0])
+        broadcast_(sz, root_rank, name + '.sz')
+        t = torch.ByteTensor(sz.tolist()[0])
+
+    broadcast_(t, root_rank, name + '.t')
+
+    if rank() != root_rank:
+        buf = io.BytesIO(t.numpy().tobytes())
+        obj = cloudpickle.load(buf)
+
+    return obj

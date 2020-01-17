@@ -18,7 +18,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import contextlib
 import os
+import shutil
+import tempfile
 
 
 def mpi_env_rank_and_size():
@@ -54,3 +57,25 @@ def mpi_env_rank_and_size():
 
     # Default to rank zero and size one if there are no environment variables
     return 0, 1
+
+
+@contextlib.contextmanager
+def tempdir():
+    dirpath = tempfile.mkdtemp()
+    try:
+        yield dirpath
+    finally:
+        shutil.rmtree(dirpath)
+
+
+@contextlib.contextmanager
+def temppath():
+    path = tempfile.mktemp()
+    try:
+        yield path
+    finally:
+        if os.path.exists(path):
+            if os.path.isfile(path):
+                os.remove(path)
+            else:
+                shutil.rmtree(path)

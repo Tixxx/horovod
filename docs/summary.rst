@@ -10,6 +10,10 @@ Horovod
    :target: https://buildkite.com/horovod/horovod
    :alt: Build Status
 
+.. image:: https://readthedocs.org/projects/horovod/badge/?version=latest
+   :target: https://horovod.readthedocs.io/en/latest/
+   :alt: Documentation Status
+
 .. image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
    :target: https://img.shields.io/badge/License-Apache%202.0-blue.svg
    :alt: License
@@ -48,11 +52,13 @@ about who's involved and how Horovod plays a role, read the LF AI `announcement 
 
 .. contents::
 
+
+The full documentation and an API reference are published at https://horovod.readthedocs.io/en/latest.
+
 |
 
 Why not traditional distributed TensorFlow?
 -------------------------------------------
-
 The primary motivation for this project is to make it easy to take a single-GPU TensorFlow program and successfully train
 it on many GPUs faster. This has two aspects:
 
@@ -78,7 +84,6 @@ scale.
 
 Install
 -------
-
 To install Horovod:
 
 1. Install `Open MPI <https://www.open-mpi.org/>`_ or another MPI implementation. Learn how to install Open MPI `on this page <https://www.open-mpi.org/faq/?category=building#easy-build>`_.
@@ -111,12 +116,13 @@ If you're installing Horovod on a server with GPUs, read `Horovod on GPU <gpus.r
 
 If you want to use Docker, read `Horovod in Docker <docker.rst>`_.
 
+To compile Horovod from source, follow the instructions in the `Contributor Guide <contributors.rst>`_.
+
 
 Concepts
 --------
-
 Horovod core principles are based on `MPI <http://mpi-forum.org/>`_ concepts such as *size*, *rank*,
-*local rank*, *allreduce*, *allgather* and, *broadcast*. See `this page <concepts.rst>`_ for more details.
+*local rank*, **allreduce**, **allgather** and, *broadcast*. See `this page <concepts.rst>`_ for more details.
 
 Supported frameworks
 --------------------
@@ -161,7 +167,7 @@ To use Horovod, make the following additions to your program. This example uses 
 
 4. Wrap the optimizer in ``hvd.DistributedOptimizer``.
 
-   The distributed optimizer delegates gradient computation to the original optimizer, averages gradients using *allreduce* or *allgather*, and then applies those averaged gradients.
+   The distributed optimizer delegates gradient computation to the original optimizer, averages gradients using **allreduce** or **allgather**, and then applies those averaged gradients.
 
 .. raw:: html
 
@@ -252,7 +258,7 @@ See `Run Horovod <running.rst>`_ for more details, including RoCE/InfiniBand twe
 
 4. To run in Docker, see `Horovod in Docker <docker.rst>`_.
 
-5. To run in Kubernetes, see `Kubeflow <https://github.com/kubeflow/kubeflow/tree/master/kubeflow/mpi-job>`_, `MPI Operator <https://github.com/kubeflow/mpi-operator/>`_, `Helm Chart <https://github.com/kubernetes/charts/tree/master/stable/horovod/>`_, and `FfDL <https://github.com/IBM/FfDL/tree/master/etc/examples/horovod/>`_.
+5. To run in Kubernetes, see `Kubeflow <https://github.com/kubeflow/examples/tree/master/demos/yelp_demo/ks_app/vendor/kubeflow/mpi-job>`_, `MPI Operator <https://github.com/kubeflow/mpi-operator/>`_, `Helm Chart <https://github.com/kubernetes/charts/tree/master/stable/horovod/>`_, and `FfDL <https://github.com/IBM/FfDL/tree/master/etc/examples/horovod/>`_.
 
 6. To run in Spark, see `Spark <spark.rst>`_.
 
@@ -319,7 +325,7 @@ Learn how to optimize your model for inference and remove Horovod operations fro
 Tensor Fusion
 -------------
 One of the unique things about Horovod is its ability to interleave communication and computation coupled with the ability
-to batch small *allreduce* operations, which results in improved performance. We call this batching feature Tensor Fusion.
+to batch small **allreduce** operations, which results in improved performance. We call this batching feature Tensor Fusion.
 
 See `here <tensor-fusion.rst>`__ for full details and tweaking instructions.
 

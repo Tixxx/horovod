@@ -28,8 +28,9 @@ import pytest
 from mock import MagicMock
 
 from horovod.run.common.util import config_parser, secret, settings as hvd_settings, timeout
+from horovod.run.common.util.host_hash import _hash, host_hash
 from horovod.run.mpi_run import _get_mpi_implementation_flags, _LARGE_CLUSTER_THRESHOLD as large_cluster_threshold, mpi_run
-from horovod.run.run import parse_args
+from horovod.run.run import parse_args, parse_host_files
 
 
 @contextlib.contextmanager
@@ -42,6 +43,17 @@ def override_args(tool=None, *args):
         yield
     finally:
         sys.argv = old
+
+
+@contextlib.contextmanager
+def override_env(env):
+    old = os.environ.copy()
+    try:
+        os.environ.update(env)
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
 
 
 class RunTests(unittest.TestCase):
@@ -139,7 +151,7 @@ class RunTests(unittest.TestCase):
         with override_args('horovodrun', '-np', '2',
                            '--mpi-threads-disable',
                            '--num-nccl-streams', '2',
-                           '--mlsl-bgt-affinity', '1',
+                           '--ccl-bgt-affinity', '1',
                            '--gloo-timeout-seconds', '60'):
             args = parse_args()
             env = {}
@@ -147,7 +159,7 @@ class RunTests(unittest.TestCase):
 
             self.assertEqual(env.get(config_parser.HOROVOD_MPI_THREADS_DISABLE), '1')
             self.assertEqual(env.get(config_parser.HOROVOD_NUM_NCCL_STREAMS), '2')
-            self.assertEqual(env.get(config_parser.HOROVOD_MLSL_BGT_AFFINITY), '1')
+            self.assertEqual(env.get(config_parser.HOROVOD_CCL_BGT_AFFINITY), '1')
             self.assertEqual(env.get(config_parser.HOROVOD_GLOO_TIMEOUT_SECONDS), '60')
 
     def test_logging_args(self):
@@ -196,7 +208,7 @@ class RunTests(unittest.TestCase):
             # Library Options
             self.assertTrue(args.mpi_threads_disable)
             self.assertEqual(args.num_nccl_streams, 2)
-            self.assertEqual(args.mlsl_bgt_affinity, 1)
+            self.assertEqual(args.ccl_bgt_affinity, 1)
             self.assertEqual(args.gloo_timeout_seconds, 60)
 
             # Logging
@@ -218,6 +230,17 @@ class RunTests(unittest.TestCase):
                            '--fusion-threshold-mb', '-1'):
             with pytest.raises(ValueError):
                 parse_args()
+
+    def test_hash(self):
+        hash = _hash("test string")
+        self.assertEqual(hash, '6f8db599de986fab7a21625b7916589c')
+
+    def test_host_hash(self):
+        hash = host_hash()
+        # host_hash should consider CONTAINER_ID environment variable
+        with override_env({'CONTAINER_ID': 'a container id'}):
+            self.assertNotEqual(host_hash(), hash)
+        self.assertEqual(host_hash(), hash)
 
     """
     Minimal mpi_run settings for tests.
@@ -336,3 +359,12 @@ class RunTests(unittest.TestCase):
 
         with pytest.raises(RuntimeError, match="^mpirun failed with exit code 1$") as e:
             mpi_run(settings, None, {}, cmd, run_func=run_func)
+
+    def test_horovodrun_hostfile(self):
+        host_filename = '/tmp/hostfile'
+        with open(host_filename, 'w+') as fp:
+            fp.write('172.31.32.7 slots=8\n')
+            fp.write('172.31.33.9 slots=8\n')
+
+        hosts = parse_host_files(host_filename)
+        self.assertEqual(hosts, '172.31.32.7:8,172.31.33.9:8')

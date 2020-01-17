@@ -31,7 +31,7 @@ from horovod.tensorflow import rank
 from horovod.tensorflow import local_rank
 from horovod.tensorflow import mpi_threads_supported, mpi_enabled, mpi_built
 from horovod.tensorflow import gloo_enabled, gloo_built
-from horovod.tensorflow import nccl_built, ddl_built, mlsl_built
+from horovod.tensorflow import nccl_built, ddl_built, ccl_built
 from horovod.tensorflow import Compression
 
 import horovod._keras as _impl
@@ -132,7 +132,7 @@ def load_model(filepath, custom_optimizers=None, custom_objects=None, compressio
     and wrapped without needing to specify any `custom_optimizers` or
     `custom_objects`.
 
-    # Arguments
+    Arguments:
         filepath: One of the following:
             - string, path to the saved model, or
             - h5py.File object from which to load the model
@@ -144,10 +144,10 @@ def load_model(filepath, custom_optimizers=None, custom_objects=None, compressio
                      sent and received by each worker node.  Defaults to not
                      using compression.
 
-    # Returns
+    Returns:
         A Keras model instance.
 
-    # Raises
+    Raises:
         ImportError: If h5py is not available.
         ValueError: In case of an invalid savefile.
     """

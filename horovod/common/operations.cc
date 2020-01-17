@@ -69,8 +69,8 @@
 #include "ops/ddl_operations.h"
 #endif
 
-#if HAVE_MLSL
-#include "ops/mlsl_operations.h"
+#if HAVE_CCL
+#include "ops/ccl_operations.h"
 #endif
 
 #if HAVE_GLOO
@@ -86,7 +86,7 @@
  * whichever hardware-optimized communication libraries are enabled.
  *
  * The primary logic of the allreduce, allgather and broadcast currently
- * support in MPI, NCCL, CUDA, Gloo, MLSL, DDL. The background thread which
+ * support in MPI, NCCL, CUDA, Gloo, oneCCL, DDL. The background thread which
  * facilitates controller operations is run in BackgroundThreadLoop().
  * The provided ops are:
  *      - HorovodAllreduce:
@@ -133,8 +133,8 @@ NCCLContext nccl_context;
 DDLContext ddl_context;
 #endif
 
-#if HAVE_MLSL
-MLSLContext mlsl_context;
+#if HAVE_CCL
+CCLContext ccl_context;
 #endif
 
 std::unique_ptr<OperationManager> op_manager;
@@ -180,6 +180,11 @@ OperationManager* CreateOperationManager(HorovodGlobalState& state) {
       new NCCLAllreduce(&nccl_context, &cuda_context, &state)));
 #endif
 
+#if HAVE_NCCL && HOROVOD_GPU_BROADCAST == 'N'
+    broadcast_ops.push_back(
+        std::shared_ptr<BroadcastOp>(new NCCLBroadcast(&nccl_context, &cuda_context, &state)));
+#endif
+
 #if HAVE_GLOO
   if (gloo_context.IsEnabled()) {
     allreduce_ops.push_back(
@@ -191,14 +196,14 @@ OperationManager* CreateOperationManager(HorovodGlobalState& state) {
   }
 #endif
 
-#if HAVE_MLSL
-  if (state.cpu_operation == LibType::MLSL) {
+#if HAVE_CCL
+  if (state.cpu_operation == LibType::CCL) {
     allreduce_ops.push_back(
-        std::shared_ptr<AllreduceOp>(new MLSLAllreduce(&mlsl_context, &state)));
+        std::make_shared<CCLAllreduce>(&ccl_context, &state));
     allgather_ops.push_back(
-        std::shared_ptr<AllgatherOp>(new MLSLAllgather(&mlsl_context, &state)));
+        std::make_shared<CCLAllgather>(&ccl_context, &state));
     broadcast_ops.push_back(
-        std::shared_ptr<BroadcastOp>(new MLSLBroadcast(&mlsl_context, &state)));
+        std::make_shared<CCLBroadcast>(&ccl_context, &state));
   }
 #endif
 
@@ -228,8 +233,8 @@ void PerformOperation(Response response, HorovodGlobalState& state) {
   std::vector<TensorTableEntry> entries;
   auto& timeline = horovod_global.timeline;
   if (response.response_type() != Response::JOIN) {
-    horovod_global.tensor_queue.GetTensorEntriesFromResponse(
-        response, entries, state.joined, state.join_device);
+    horovod_global.tensor_queue.GetTensorEntriesFromResponse(response, entries,
+                                                             state.joined);
 
     for (auto& e : entries) {
       timeline.Start(e.tensor_name, response.response_type());
@@ -326,10 +331,10 @@ void PerformOperation(Response response, HorovodGlobalState& state) {
 bool RunLoopOnce(HorovodGlobalState& state);
 
 void BackgroundThreadLoop(HorovodGlobalState& state) {
-  // Initialize mlsl context
-#if HAVE_MLSL
-  if (state.cpu_operation == LibType::MLSL) {
-    mlsl_context.Init();
+  // Initialize ccl context
+#if HAVE_CCL
+  if (state.cpu_operation == LibType::CCL) {
+    ccl_context.Init();
   }
 #endif
 
@@ -366,10 +371,6 @@ void BackgroundThreadLoop(HorovodGlobalState& state) {
   int size = state.controller->GetSize();
   int local_size = state.controller->GetLocalSize();
 
-#if HAVE_MLSL
-  mlsl_context.Setup(size);
-#endif
-
 #if HAVE_CUDA
   // Set number of CUDA streams to use
   auto horovod_num_nccl_streams =
@@ -383,6 +384,9 @@ void BackgroundThreadLoop(HorovodGlobalState& state) {
   nccl_context.nccl_comms.resize(state.num_nccl_streams);
 #endif
   cuda_context.streams.resize(state.num_nccl_streams);
+
+  // Create finalizer thread pool (one thread per stream)
+  cuda_context.finalizer_thread_pool.create(state.num_nccl_streams);
 #endif
 
   // Open the timeline file on coordinator.
@@ -516,13 +520,17 @@ void BackgroundThreadLoop(HorovodGlobalState& state) {
     cb(SHUT_DOWN_ERROR);
   }
 
+#if HAVE_CUDA
+  cuda_context.Finalize();
+#endif
+
 #if HAVE_MPI
   mpi_context.Finalize(mpi_ctx_manager);
 #endif
 
-#if HAVE_MLSL
-  if (state.cpu_operation == LibType::MLSL){
-    mlsl_context.Finalize();
+#if HAVE_CCL
+  if (state.cpu_operation == LibType::CCL){
+    ccl_context.Finalize();
   }
 #endif
 
@@ -656,6 +664,7 @@ void horovod_shutdown() {
   if (horovod_global.background_thread.joinable()) {
     horovod_global.shut_down = true;
     horovod_global.background_thread.join();
+
     // Reset the initialization flag to allow restarting with horovod_init(...)
     horovod_global.initialize_flag.clear();
     horovod_global.shut_down = false;
@@ -756,8 +765,8 @@ bool horovod_ddl_built() {
 #endif
 }
 
-bool horovod_mlsl_built() {
-#if HAVE_MLSL
+bool horovod_ccl_built() {
+#if HAVE_CCL
   return true;
 #else
   return false;

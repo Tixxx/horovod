@@ -24,11 +24,14 @@
 #include <cuda_runtime.h>
 
 #include "collective_operations.h"
+#include "../thread_pool.h"
 
 namespace horovod {
 namespace common {
 
 struct CUDAContext {
+  void Finalize();
+
   cudaError_t GetCudaEvent(cudaEvent_t* event);
 
   cudaError_t ReleaseCudaEvent(cudaEvent_t event);
@@ -60,6 +63,9 @@ struct CUDAContext {
 
   void WaitForEvents(std::queue<std::pair<std::string, cudaEvent_t>>& event_queue,
                      const std::vector<TensorTableEntry>& entries, Timeline& timeline);
+
+  // Thread pool for finalizer threads
+  ThreadPool finalizer_thread_pool;
 };
 
 class CUDAOpContext {
@@ -129,6 +135,20 @@ protected:
                                   const void* buffer_data_at_offset, TensorTableEntry& e,
                                   int64_t entry_offset, size_t entry_size) override;
 
+  struct CUDAContext* cuda_context_;
+  CUDAOpContext cuda_op_context_;
+};
+
+class CUDABroadcast : public BroadcastOp {
+public:
+  CUDABroadcast(CUDAContext* context,
+                HorovodGlobalState* global_state);
+
+  bool Enabled(const ParameterManager& param_manager,
+               const std::vector<TensorTableEntry>& entries,
+               const Response& response) const override;
+
+protected:
   struct CUDAContext* cuda_context_;
   CUDAOpContext cuda_op_context_;
 };

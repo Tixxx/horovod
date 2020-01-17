@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+
 from __future__ import print_function
 
 import os
@@ -23,6 +24,7 @@ import sys
 import textwrap
 import traceback
 import pipes
+import warnings
 from copy import deepcopy
 from distutils.errors import CompileError, DistutilsError, \
     DistutilsPlatformError, LinkError
@@ -50,8 +52,8 @@ mxnet_mpi_lib = Extension('horovod.mxnet.mpi_lib', [])
 gloo_lib = CMakeExtension('gloo', cmake_lists_dir='third_party/gloo',
                           sources=[])
 
-mlsl_root = os.environ.get('MLSL_ROOT')
-have_mlsl = mlsl_root is not None
+ccl_root = os.environ.get('CCL_ROOT')
+have_ccl = ccl_root is not None
 
 
 def is_build_action():
@@ -99,31 +101,33 @@ def check_mx_version():
             'Your MXNet version is outdated.  Horovod requires mxnet>1.3.0')
 
 
-def check_avx_supported():
+def get_supported_instruction_set_flags(flags_to_check):
+    supported = []
     try:
         flags_output = subprocess.check_output(
             'gcc -march=native -E -v - </dev/null 2>&1 | grep cc1',
             shell=True, universal_newlines=True).strip()
         flags = shlex.split(flags_output)
-        return '+f16c' in flags and '+avx' in flags
+        supported = [x for x in flags_to_check if x in flags or x.replace('-m', '+') in flags]
     except subprocess.CalledProcessError:
-        # Fallback to non-AVX if were not able to get flag information.
-        return False
+        # Fallback to no advanced instruction set flags if were not able to get flag information.
+        pass
+    return supported
 
 
 def get_cpp_flags(build_ext):
     last_err = None
-    default_flags = ['-std=c++11', '-fPIC', '-O2', '-Wall', '-mf16c', '-mavx', '-mfma', '-fassociative-math', '-ffast-math', '-ftree-vectorize', '-funsafe-math-optimizations']
-    avx_flags = ['-mf16c', '-mavx'] if check_avx_supported() else []
+    default_flags = ['-std=c++11', '-fPIC', '-O2', '-Wall', '-fassociative-math', '-ffast-math', '-ftree-vectorize', '-funsafe-math-optimizations']
+    avx_fma_flags = get_supported_instruction_set_flags(['-mf16c', '-mavx', '-mfma'])
     if sys.platform == 'darwin':
         # Darwin most likely will have Clang, which has libc++.
-        flags_to_try = [default_flags + ['-stdlib=libc++'] + avx_flags,
-                        default_flags + avx_flags,
+        flags_to_try = [default_flags + ['-stdlib=libc++'] + avx_fma_flags,
+                        default_flags + avx_fma_flags,
                         default_flags + ['-stdlib=libc++'],
                         default_flags]
     else:
-        flags_to_try = [default_flags + avx_flags + ['-fopt-info-vec-optimized'],
-                        default_flags + ['-stdlib=libc++'] + avx_flags,
+        flags_to_try = [default_flags + avx_fma_flags,
+                        default_flags + ['-stdlib=libc++'] + avx_fma_flags,
                         default_flags,
                         default_flags + ['-stdlib=libc++']]
     for cpp_flags in flags_to_try:
@@ -520,6 +524,17 @@ def get_ddl_dirs(build_ext, cuda_include_dirs, cuda_lib_dirs, cpp_flags):
     return ddl_include_dirs, ddl_lib_dirs
 
 
+def set_cuda_options(build_ext, COMPILE_FLAGS, MACROS, INCLUDES, SOURCES, BUILD_MPI, LIBRARY_DIRS, LIBRARIES, **kwargs):
+    cuda_include_dirs, cuda_lib_dirs = get_cuda_dirs(build_ext, COMPILE_FLAGS)
+    MACROS += [('HAVE_CUDA', '1')]
+    INCLUDES += cuda_include_dirs
+    SOURCES += ['horovod/common/ops/cuda_operations.cc']
+    if BUILD_MPI:
+        SOURCES += ['horovod/common/ops/mpi_cuda_operations.cc']
+    LIBRARY_DIRS += cuda_lib_dirs
+    LIBRARIES += ['cudart']
+
+
 def get_common_options(build_ext):
     cpp_flags = get_cpp_flags(build_ext)
     link_flags = get_link_flags(build_ext)
@@ -589,9 +604,9 @@ def get_common_options(build_ext):
                              'values are "", "MPI".' % gpu_allgather)
 
     gpu_broadcast = os.environ.get('HOROVOD_GPU_BROADCAST')
-    if gpu_broadcast and gpu_broadcast != 'MPI':
+    if gpu_broadcast and gpu_broadcast != 'MPI' and gpu_broadcast != 'NCCL':
         raise DistutilsError('HOROVOD_GPU_BROADCAST=%s is invalid, supported '
-                             'values are "", "MPI".' % gpu_broadcast)
+                             'values are "", "MPI", "NCCL".' % gpu_broadcast)
 
     if gpu_allreduce or gpu_allgather or gpu_broadcast:
         have_cuda = True
@@ -609,6 +624,8 @@ def get_common_options(build_ext):
         nccl_include_dirs = nccl_lib_dirs = nccl_libs = []
 
     if gpu_allreduce == 'DDL':
+        warnings.warn("WARN: DDL backend has been deprecated. Please, start using the NCCL backend "
+                      "by building Horovod with 'HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_GPU_BROADCAST=NCCL'.")
         have_ddl = True
         ddl_include_dirs, ddl_lib_dirs = get_ddl_dirs(build_ext,
                                                       cuda_include_dirs,
@@ -652,6 +669,7 @@ def get_common_options(build_ext):
                'horovod/common/parameter_manager.cc',
                'horovod/common/response_cache.cc',
                'horovod/common/stall_inspector.cc',
+               'horovod/common/thread_pool.cc',
                'horovod/common/timeline.cc',
                'horovod/common/tensor_queue.cc',
                'horovod/common/ops/collective_operations.cc',
@@ -671,11 +689,13 @@ def get_common_options(build_ext):
         if cpu_operation.upper() == 'MPI':
             if not have_mpi:
                 raise RuntimeError('MPI is not installed, try changing HOROVOD_CPU_OPERATIONS.')
-            MACROS += [('HOROVOD_CPU_OPERATIONS_DEFAULT', "'P'")]
-        elif cpu_operation.upper() == 'MLSL':
-            if not have_mlsl:
-                raise RuntimeError('MLSL is not installed, try changing HOROVOD_CPU_OPERATIONS.')
             MACROS += [('HOROVOD_CPU_OPERATIONS_DEFAULT', "'M'")]
+        elif cpu_operation.upper() == 'MLSL':
+            raise RuntimeError('Intel(R) MLSL was deprecated. Upgrade to oneCCL and try setting HOROVOD_CPU_OPERATIONS=CCL.')
+        elif cpu_operation.upper() == 'CCL':
+            if not have_ccl:
+                raise RuntimeError('oneCCL is not installed, try changing HOROVOD_CPU_OPERATIONS.')
+            MACROS += [('HOROVOD_CPU_OPERATIONS_DEFAULT', "'C'")]
         elif cpu_operation.upper() == 'GLOO':
             if compile_without_gloo:
                 raise ValueError('Cannot set both HOROVOD_WITHOUT_GLOO and HOROVOD_CPU_OPERATIONS=GLOO.')
@@ -705,22 +725,16 @@ def get_common_options(build_ext):
                     'horovod/common/gloo/memory_store.cc',
                     'horovod/common/ops/gloo_operations.cc']
 
-    if have_mlsl:
-        MACROS += [('HAVE_MLSL', '1')]
-        INCLUDES += [mlsl_root + '/intel64/include/']
-        SOURCES += ['horovod/common/ops/mlsl_operations.cc']
-        LIBRARY_DIRS += [mlsl_root + '/intel64/lib/']
-        LINK_FLAGS += ['-lmlsl']
+    if have_ccl:
+        MACROS += [('HAVE_CCL', '1')]
+        INCLUDES += [ccl_root + '/include/']
+        SOURCES += ['horovod/common/ops/ccl_operations.cc']
+        LIBRARY_DIRS += [ccl_root + '/lib/']
+        LINK_FLAGS += ['-lccl']
 
     if have_cuda:
-        MACROS += [('HAVE_CUDA', '1')]
-        INCLUDES += cuda_include_dirs
-        SOURCES += ['horovod/common/ops/cuda_operations.cc']
-        if have_mpi:
-            SOURCES += ['horovod/common/ops/mpi_cuda_operations.cc']
+        set_cuda_options(build_ext, COMPILE_FLAGS, MACROS, INCLUDES, SOURCES, have_mpi, LIBRARY_DIRS, LIBRARIES)
         INCLUDES += ['horovod/common/ops/cuda']
-        LIBRARY_DIRS += cuda_lib_dirs
-        LIBRARIES += ['cudart']
 
     if have_nccl:
         MACROS += [('HAVE_NCCL', '1')]
@@ -1019,15 +1033,7 @@ def build_mx_extension(build_ext, global_options):
     # HOROVOD_GPU_(ALLREDUCE|ALLGATHER|BROADCAST) to decide whether we should use GPU
     # version or transfer tensors to CPU memory for those operations.
     if mx_have_cuda and not macro_have_cuda:
-        cuda_include_dirs, cuda_lib_dirs = get_cuda_dirs(build_ext, options[
-            'COMPILE_FLAGS'])
-        options['MACROS'] += [('HAVE_CUDA', '1')]
-        options['INCLUDES'] += cuda_include_dirs
-        options['SOURCES'] += ['horovod/common/ops/cuda_operations.cc']
-        if options['BUILD_MPI']:
-            options['SOURCES'] += ['horovod/common/ops/mpi_cuda_operations.cc']
-        options['LIBRARY_DIRS'] += cuda_lib_dirs
-        options['LIBRARIES'] += ['cudart']
+        set_cuda_options(build_ext, **options)
 
     mxnet_mpi_lib.define_macros = options['MACROS']
     if check_macro(options['MACROS'], 'HAVE_CUDA'):
@@ -1128,6 +1134,14 @@ def set_macro(macros, key, new_value):
         return macros + [(key, new_value)]
 
 
+def set_flag(flags, flag, value):
+    flag = '-' + flag
+    if any(f.split('=')[0] == flag for f in flags):
+        return [('{}={}'.format(flag, value) if f.split('=')[0] == flag else f) for f in flags]
+    else:
+        return flags + ['{}={}'.format(flag, value)]
+
+
 class protect_files(object):
     def __init__(self, *files):
         self.files = files
@@ -1147,7 +1161,8 @@ def build_torch_extension(build_ext, global_options, torch_version):
     options = deepcopy(global_options)
 
     have_cuda = is_torch_cuda()
-    if not have_cuda and check_macro(options['MACROS'], 'HAVE_CUDA'):
+    have_cuda_macro = check_macro(options['MACROS'], 'HAVE_CUDA')
+    if not have_cuda and have_cuda_macro:
         raise DistutilsPlatformError(
             'Horovod build with GPU support was requested, but this PyTorch '
             'installation does not support CUDA.')
@@ -1159,13 +1174,13 @@ def build_torch_extension(build_ext, global_options, torch_version):
     # Update HAVE_CUDA to mean that PyTorch supports CUDA. Internally, we will be checking
     # HOROVOD_GPU_(ALLREDUCE|ALLGATHER|BROADCAST) to decide whether we should use GPU
     # version or transfer tensors to CPU memory for those operations.
-    updated_macros = set_macro(
-        options['MACROS'], 'HAVE_CUDA', str(int(have_cuda)))
+    if have_cuda and not have_cuda_macro:
+        set_cuda_options(build_ext, **options)
 
     # Export TORCH_VERSION equal to our representation of torch.__version__. Internally it's
     # used for backwards compatibility checks.
     updated_macros = set_macro(
-        updated_macros, 'TORCH_VERSION', str(torch_version))
+        options['MACROS'], 'TORCH_VERSION', str(torch_version))
 
     # Create_extension overwrites these files which are customized, we need to protect them.
     with protect_files('horovod/torch/mpi_lib/__init__.py',
@@ -1216,9 +1231,16 @@ def build_torch_extension_v2(build_ext, global_options, torch_version):
     # compiled with compiler of this plugin
     options = deepcopy(global_options)
 
+    # Versions of PyTorch > 1.3.0 require C++14
+    import torch
+    compile_flags = options['COMPILE_FLAGS']
+    if LooseVersion(torch.__version__) >= LooseVersion('1.3.0'):
+        compile_flags = set_flag(compile_flags, 'std', 'c++14')
+
     have_cuda = is_torch_cuda_v2(build_ext, include_dirs=options['INCLUDES'],
-                                 extra_compile_args=options['COMPILE_FLAGS'])
-    if not have_cuda and check_macro(options['MACROS'], 'HAVE_CUDA'):
+                                 extra_compile_args=compile_flags)
+    have_cuda_macro = check_macro(options['MACROS'], 'HAVE_CUDA')
+    if not have_cuda and have_cuda_macro:
         raise DistutilsPlatformError(
             'Horovod build with GPU support was requested, but this PyTorch '
             'installation does not support CUDA.')
@@ -1226,16 +1248,15 @@ def build_torch_extension_v2(build_ext, global_options, torch_version):
     # Update HAVE_CUDA to mean that PyTorch supports CUDA. Internally, we will be checking
     # HOROVOD_GPU_(ALLREDUCE|ALLGATHER|BROADCAST) to decide whether we should use GPU
     # version or transfer tensors to CPU memory for those operations.
-    updated_macros = set_macro(
-        options['MACROS'], 'HAVE_CUDA', str(int(have_cuda)))
+    if have_cuda and not have_cuda_macro:
+        set_cuda_options(build_ext, **options)
 
     # Export TORCH_VERSION equal to our representation of torch.__version__. Internally it's
     # used for backwards compatibility checks.
     updated_macros = set_macro(
-        updated_macros, 'TORCH_VERSION', str(torch_version))
+        options['MACROS'], 'TORCH_VERSION', str(torch_version))
 
     # Always set _GLIBCXX_USE_CXX11_ABI, since PyTorch can only detect whether it was set to 1.
-    import torch
     updated_macros = set_macro(updated_macros, '_GLIBCXX_USE_CXX11_ABI',
                                str(int(torch.compiled_with_cxx11_abi())))
 
@@ -1252,18 +1273,18 @@ def build_torch_extension_v2(build_ext, global_options, torch_version):
         from torch.utils.cpp_extension import CppExtension as TorchExtension
 
     ext = TorchExtension(torch_mpi_lib_v2.name,
-                        define_macros=updated_macros,
-                        include_dirs=options['INCLUDES'],
-                        sources=options['SOURCES'] + [
+                         define_macros=updated_macros,
+                         include_dirs=options['INCLUDES'],
+                         sources=options['SOURCES'] + [
                             'horovod/torch/mpi_ops_v2.cc',
                             'horovod/torch/handle_manager.cc',
                             'horovod/torch/ready_event.cc',
                             'horovod/torch/cuda_util.cc',
                             'horovod/torch/adapter_v2.cc'],
-                        extra_compile_args=options['COMPILE_FLAGS'],
-                        extra_link_args=options['LINK_FLAGS'],
-                        library_dirs=options['LIBRARY_DIRS'],
-                        libraries=options['LIBRARIES'])
+                         extra_compile_args=compile_flags,
+                         extra_link_args=options['LINK_FLAGS'],
+                         library_dirs=options['LIBRARY_DIRS'],
+                         libraries=options['LIBRARIES'])
 
     # Patch an existing torch_mpi_lib_v2 extension object.
     for k, v in ext.__dict__.items():
@@ -1430,6 +1451,7 @@ class custom_build_ext(build_ext):
 
 
 require_list = ['cloudpickle', 'psutil', 'pyyaml', 'six']
+test_require_list = ['mock', 'pytest', 'pytest-forked']
 
 # Skip cffi if pytorch extension explicitly disabled
 if not os.environ.get('HOROVOD_WITHOUT_PYTORCH'):
@@ -1456,5 +1478,15 @@ setup(name='horovod',
       # so it's only necessary for `build*` or `bdist*` actions.
       setup_requires=require_list if is_build_action() else [],
       install_requires=require_list,
+      test_requires=test_require_list,
+      extras_require={
+          'spark':  [
+              'h5py>=2.9',
+              'numpy',
+              'petastorm>=0.7.7',
+              'pyarrow>=0.15.0',  # Petastorm 0.7.7 is not compatible with < 0.15.0
+              'pyspark>=2.3.2'
+          ],
+      },
       zip_safe=False,
       scripts=['bin/horovodrun'])

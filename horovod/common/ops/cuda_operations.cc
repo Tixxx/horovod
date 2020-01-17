@@ -21,6 +21,10 @@
 namespace horovod {
 namespace common {
 
+void CUDAContext::Finalize() {
+  finalizer_thread_pool.reset();
+}
+
 cudaError_t CUDAContext::GetCudaEvent(cudaEvent_t* event) {
   int device;
   auto status = cudaGetDevice(&device);
@@ -136,9 +140,8 @@ Status CUDAOpContext::FinalizeCUDAQueue(const std::vector<TensorTableEntry>& ent
   auto fusion_buffer = global_state_->fusion_buffer.GetBuffer(
       first_entry.device, first_entry.context->framework(), global_state_->current_nccl_stream);
 
-  // TODO: use thread pool or single thread for callbacks
-  std::thread finalizer_thread([entries, first_entry, cpu_buffer, fusion_buffer, free_host_buffer,
-                                evt_queue, &timeline, &cuda_context]() mutable {
+  cuda_context_->finalizer_thread_pool.execute([entries, first_entry, cpu_buffer, fusion_buffer, free_host_buffer,
+                                                evt_queue, &timeline, &cuda_context]() mutable {
     auto cuda_result = cudaSetDevice(first_entry.device);
     cuda_context->ErrorCheck("cudaSetDevice", cuda_result);
 
@@ -155,8 +158,6 @@ Status CUDAOpContext::FinalizeCUDAQueue(const std::vector<TensorTableEntry>& ent
       }
     }
   });
-
-  finalizer_thread.detach();
 
   // Update current stream
   global_state_->current_nccl_stream = (global_state_->current_nccl_stream + 1) %
@@ -220,6 +221,16 @@ void CUDAAllgather::MemcpyEntryOutFusionBuffer(const std::vector<TensorTableEntr
                                      entry_size, cudaMemcpyDeviceToDevice,
                                      cuda_context_->streams[global_state_->current_nccl_stream][first_entry.device]);
   cuda_context_->ErrorCheck("cudaMemcpyAsync", cuda_result);
+}
+
+CUDABroadcast::CUDABroadcast(CUDAContext* context,
+                             HorovodGlobalState* global_state)
+    : BroadcastOp(global_state), cuda_context_(context), cuda_op_context_(context, global_state) {}
+
+bool CUDABroadcast::Enabled(const ParameterManager& param_manager,
+                            const std::vector<TensorTableEntry>& entries,
+                            const Response& response) const {
+  return entries[0].device != CPU_DEVICE_ID;
 }
 
 } // namespace common

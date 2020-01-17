@@ -57,7 +57,16 @@ gloo_enabled = _basics.gloo_enabled
 gloo_built = _basics.gloo_built
 nccl_built = _basics.nccl_built
 ddl_built = _basics.ddl_built
-mlsl_built = _basics.mlsl_built
+ccl_built = _basics.ccl_built
+
+# import reduction op values
+Average = _basics.Average
+Sum = _basics.Sum
+Adasum = _basics.Adasum
+
+is_homogeneous = _basics.is_homogeneous
+
+handle_average_backwards_compatibility = get_average_backwards_compatibility_fun(_basics)
 
 # import reduction op values
 Average = _basics.Average
@@ -101,8 +110,8 @@ def _allreduce_async(tensor, output, name, op):
     # Set the divisor for reduced gradients to average when necessary
     if op == Average:
         divisor = size()
-    elif (op == Adasum):
-        if (tensor.device.type != 'cpu' and _has_gpu):
+    elif op == Adasum:
+        if tensor.device.type != 'cpu' and gpu_available('torch'):
             if nccl_built():
                 if not is_homogeneous():
                     raise NotImplementedError('Running GPU Adasum on heterogeneous cluster is not supported yet.')
@@ -110,9 +119,9 @@ def _allreduce_async(tensor, output, name, op):
                     raise NotImplementedError('Running GPU Adasum with non-power of 2 nodes is not supported yet.')
                 divisor = local_size()
             else:
-                warnings.warn("Adasum reduction does not currently support "
-                    "GPU reduction using MPI. Tensors are copied to CPU memory instead."
-                    "To use Adasum for GPU reduction, please compile Horovod with HOROVOD_GPU_ALLREDUCE=NCCL.")
+                warnings.warn('Adasum reduction does not currently support GPU reduction using MPI. Tensors are '
+                              'copied to CPU memory instead. To use Adasum for GPU reduction, please compile Horovod '
+                              'with HOROVOD_GPU_ALLREDUCE=NCCL.')
                 divisor = 1
         else:
             if not num_rank_is_power_2(size()):

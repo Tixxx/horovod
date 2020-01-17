@@ -30,9 +30,8 @@ from horovod.tensorflow.mpi_ops import init, shutdown
 from horovod.tensorflow.mpi_ops import size, local_size, rank, local_rank, is_homogeneous
 from horovod.tensorflow.mpi_ops import mpi_threads_supported, mpi_enabled, mpi_built
 from horovod.tensorflow.mpi_ops import gloo_enabled, gloo_built
-from horovod.tensorflow.mpi_ops import nccl_built, ddl_built, mlsl_built
+from horovod.tensorflow.mpi_ops import nccl_built, ddl_built, ccl_built
 from horovod.tensorflow.mpi_ops import Average, Sum, Adasum
-from horovod.tensorflow.mpi_ops import _check_has_gpu
 from horovod.tensorflow.mpi_ops import handle_average_backwards_compatibility, check_num_rank_power_of_2
 
 from horovod.tensorflow.util import _executing_eagerly, _make_subgraph, _cache
@@ -40,7 +39,6 @@ from horovod.tensorflow.util import _executing_eagerly, _make_subgraph, _cache
 import tensorflow as tf
 import warnings
 
-has_gpu = gpu_available('tensorflow')
 def allreduce(tensor, average=None, device_dense='', device_sparse='',
               compression=Compression.none, op=None):
     """Perform an allreduce on a tf.Tensor or tf.IndexedSlices.
@@ -75,9 +73,8 @@ def allreduce(tensor, average=None, device_dense='', device_sparse='',
     if isinstance(tensor, tf.IndexedSlices):
         # TODO: Need to fix this to actuall call Adasum
         if op == Adasum:
-            raise NotImplementedError("The Adasum reduction does not currently support "
-                "sparse tensors. As a workaround please pass sparse_as_dense=True to "
-                "DistributedOptimizer")
+            raise NotImplementedError('The Adasum reduction does not currently support sparse tensors. As a '
+                                      'workaround please pass sparse_as_dense=True to DistributedOptimizer')
         with tf.device(device_sparse):
             # For IndexedSlices, do two allgathers instead of an allreduce.
             horovod_size = tf.cast(size(), tensor.values.dtype)
@@ -96,18 +93,20 @@ def allreduce(tensor, average=None, device_dense='', device_sparse='',
             summed_tensor_compressed = _allreduce(tensor_compressed, op=true_op)
             summed_tensor = compression.decompress(summed_tensor_compressed, ctx)
             if op == Adasum:
-                if ('CPU' not in tensor.device and has_gpu):
+                if 'CPU' not in tensor.device and gpu_available('tensorflow'):
                     if nccl_built():
                         if not is_homogeneous:
-                            raise NotImplementedError('Running GPU Adasum on heterogeneous cluster is not supported yet.')
+                            raise NotImplementedError(
+                                'Running GPU Adasum on heterogeneous cluster is not supported yet.')
                         elif not check_num_rank_power_of_2(int(size() / local_size())):
-                            raise NotImplementedError('Running GPU Adasum with non-power of 2 nodes is not supported yet.')
+                            raise NotImplementedError(
+                                'Running GPU Adasum with non-power of 2 nodes is not supported yet.')
                         horovod_local_size = tf.cast(local_size(), dtype=tensor.dtype)
                         new_tensor = summed_tensor / horovod_local_size
                     else:
-                        warnings.warn("Adasum reduction does not currently support "
-                            "GPU reduction using MPI. Tensors are copied to CPU memory instead."
-                            "To use Adasum for GPU reduction, please compile Horovod with HOROVOD_GPU_ALLREDUCE=NCCL.")
+                        warnings.warn('Adasum reduction does not currently support GPU reduction using MPI. Tensors '
+                                      'are copied to CPU memory instead. To use Adasum for GPU reduction, please '
+                                      'compile Horovod with HOROVOD_GPU_ALLREDUCE=NCCL.')
                         new_tensor = summed_tensor
                 else:
                     if not check_num_rank_power_of_2(size()):

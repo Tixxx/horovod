@@ -36,19 +36,15 @@ public:
   int64_t GetTensorDataForAutotuner(const ResponseList& response_list,
                                     std::vector<std::string>& tensor_names);
 
-  void GetTensorEntriesFromResponse(Response& response,
+  void GetTensorEntriesFromResponse(const Response& response,
                                     std::vector<TensorTableEntry>& entries,
-                                    bool joined = false,
-                                    int join_device = CPU_DEVICE_ID);
+                                    bool joined = false);
 
   const TensorTableEntry& GetTensorEntry(const std::string& tensor_name) const;
 
   void PopMessagesFromQueue(std::deque<Request>& message_queue_buffer);
 
   void PushMessageToQueue(Request& message);
-
-  bool GetTensorSizeAndType(const std::string& tensor_name, int64_t& size,
-                             DataType& dtype);
 
   void RemoveJoinTensor();
 
