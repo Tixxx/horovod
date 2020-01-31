@@ -547,7 +547,7 @@ def broadcast_optimizer_state(optimizer, root_rank):
     for index, group in enumerate(state_dict['param_groups']):
         # Broadcast options like learning rate
         for option_key, option_value in group.items():
-            if option_key == 'params':
+            if option_key == 'params' or isinstance(option_value, str):
                 continue
 
             # Options like the learning rate are scalar, and need to be wrapped in tensors
