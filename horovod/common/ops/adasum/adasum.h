@@ -340,7 +340,17 @@ private:
                                    Communicator_type& comm, bool isLeftNeighbor,
                                    std::vector<double>& normAndDots,
                                    HorovodGlobalState* global_state) {
-    static double sqrt_double_min = std::sqrt(DBL_MIN);
+    double sqrt_min;
+    if (horovod_datatype == DataType::HOROVOD_FLOAT16) {
+      sqrt_min = std::sqrt(6e-5);
+    } else if (horovod_datatype == DataType::HOROVOD_FLOAT32) {
+      sqrt_min = std::sqrt(FLT_MIN);
+    } else if (horovod_datatype == DataType::HOROVOD_FLOAT64) {
+      sqrt_min = std::sqrt(DBL_MIN);
+    } else {
+      throw std::logic_error("Unsupported data type.");
+    }
+
     int per_element_size =
         global_state->controller->GetTypeSize(horovod_datatype);
     int bytesSoFar = 0;
@@ -380,13 +390,11 @@ private:
         anormsq = normAndDots[i * 3 + 2];
       }
 
-      double acoeff = 1;
-      double bcoeff = 1;
-      if (anormsq >= sqrt_double_min) {
+      double acoeff = 0.5;
+      double bcoeff = 0.5;
+      if (anormsq >= sqrt_min && bnormsq >= sqrt_min) {
         acoeff = 1.0 - dotProduct / anormsq * 0.5;
-      }
-      if (bnormsq >= sqrt_double_min) {
-        bcoeff = 1.0 - dotProduct / bnormsq * 0.5;
+	bcoeff = 1.0 - dotProduct / bnormsq * 0.5;
       }
 
       DispatchScaledAdd(horovod_datatype, tensor_counts[i], acoeff,
