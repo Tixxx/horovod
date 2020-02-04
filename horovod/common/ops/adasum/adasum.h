@@ -342,7 +342,7 @@ private:
                                    HorovodGlobalState* global_state) {
     double sqrt_min;
     if (horovod_datatype == DataType::HOROVOD_FLOAT16) {
-      sqrt_min = std::sqrt(6e-5);
+      sqrt_min = std::sqrt(6.1035156e-5);
     } else if (horovod_datatype == DataType::HOROVOD_FLOAT32) {
       sqrt_min = std::sqrt(FLT_MIN);
     } else if (horovod_datatype == DataType::HOROVOD_FLOAT64) {
