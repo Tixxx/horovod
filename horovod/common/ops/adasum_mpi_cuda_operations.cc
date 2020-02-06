@@ -176,7 +176,7 @@ void AdasumMPICudaAllreduceOp::DispatchScaledAdd(DataType horovod_datatype, int 
   }
 }
 
-void SynchronizeScaledAdd() {
+void AdasumMPICudaAllreduceOp::SynchronizeScaledAdd() {
   cuda_context_->ErrorCheck("cudaStreamSynchronize",
       cudaStreamSynchronize(0));
 }
