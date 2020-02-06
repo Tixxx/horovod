@@ -176,6 +176,11 @@ void AdasumMPICudaAllreduceOp::DispatchScaledAdd(DataType horovod_datatype, int 
   }
 }
 
+void SynchronizeScaledAdd() {
+  cuda_context_->ErrorCheck("cudaStreamSynchronize",
+      cudaStreamSynchronize(0));
+}
+
 void AdasumMPICudaAllreduceOp::InitDeviceVariables() {
   if (device_vals == nullptr) {
     cuda_context_->ErrorCheck("cudaMalloc",

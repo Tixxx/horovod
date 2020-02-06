@@ -50,6 +50,8 @@ public:
                          double acoeff, void* __restrict__ a,
                          double bcoeff, void* __restrict__ b,
                          int layerid) override;
+  
+  void SynchronizeScaledAdd() override;
 protected:
   uint8_t* CheckBufferAndReallocate(uint8_t** buffer,
                                     uint64_t buffer_length,

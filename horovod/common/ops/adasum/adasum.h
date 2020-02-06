@@ -129,6 +129,8 @@ protected:
     }
   }
 
+  virtual void SynchronizeScaledAdd() {}
+
   // Get recv buffer
   uint8_t* GetRecvBuffer(int buffer_length) {
     return CheckBufferAndReallocate(&recv_buffer_, buffer_length,
@@ -401,6 +403,7 @@ private:
                         &a[bytesSoFar], bcoeff, &b[bytesSoFar], layerid);
       bytesSoFar += tensor_counts[i] * per_element_size;
     }
+    SynchronizeScaledAdd();
   }
 
   // Given two vectors compute their dot product and the squared norm for each.
