@@ -301,10 +301,10 @@ private:
         grad_buffer = &grad_buffer[nghrCount];
         recv_buffer = &recv_buffer[nghrCount];
       }
-      FusedPairwiseReduceWithComm(
-          entries, (uint8_t*)grad_buffer, (uint8_t*)recv_buffer,
-          horovod_datatype, tensor_counts, tag, reduction_comms[comm_index],
-          (rank & level) == 0, normAndDots, global_state);
+      // FusedPairwiseReduceWithComm(
+      //     entries, (uint8_t*)grad_buffer, (uint8_t*)recv_buffer,
+      //     horovod_datatype, tensor_counts, tag, reduction_comms[comm_index],
+      //     (rank & level) == 0, normAndDots, global_state);
     }
 
     for (level = (size >> 1); level > 0; level = (level >> 1)) {
