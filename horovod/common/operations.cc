@@ -389,6 +389,8 @@ void BackgroundThreadLoop(HorovodGlobalState& state) {
   cuda_context.finalizer_thread_pool.create(state.num_nccl_streams);
 #endif
 
+  state.finalizer_thread_pool.create(10);
+
   // Open the timeline file on coordinator.
   auto horovod_timeline = std::getenv(HOROVOD_TIMELINE);
   if (is_coordinator && horovod_timeline != nullptr) {
