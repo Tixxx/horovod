@@ -81,7 +81,16 @@ Status AdasumMPIAllreduceOp::Execute(std::vector<TensorTableEntry>& entries,
     timeline.ActivityEndAll(entries);
   }
 
-  return Status::OK();
+  global_state_->finalizer_thread_pool.execute([entries]() mutable {
+    for (auto& e : entries) {
+      // Callback can be null if the rank sent Join request.
+      if (e.callback != nullptr) {
+        e.callback(Status::OK());
+      }
+    }
+  });
+
+  return Status::InProgress();
 }
 } // namespace common
 } // namespace horovod

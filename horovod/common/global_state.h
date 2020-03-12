@@ -26,6 +26,7 @@
 #include "tensor_queue.h"
 #include "timeline.h"
 #include "utils/env_parser.h"
+#include "thread_pool.h"
 
 namespace horovod {
 namespace common {
@@ -49,6 +50,9 @@ struct HorovodGlobalState {
 
   // Whether the background thread should shutdown.
   std::atomic_bool shut_down{false};
+
+  // Thread pool for finalizer threads
+  ThreadPool finalizer_thread_pool;
 
   // Timeline writer.
   Timeline timeline;
