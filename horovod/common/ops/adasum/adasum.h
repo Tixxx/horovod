@@ -341,25 +341,38 @@ private:
         recv_buffer = &recv_buffer[nghrCount];
       }
       {
+        size_t i = 0;
         size_t countSoFar = 0;
-        for (size_t i = 0; i < tensor_counts.size();) {
-          this->Wait(&recvRequests[i]);
-          size_t j = i + 1;
-          while(j < tensor_counts.size() && this->Test(&recvRequests[j])) {
-            ++j;
+        while (i < tensor_counts.size()) {
+          for (;;) {
+            if (i >= tensor_counts.size()) {
+              break;
+            } else if (tensor_counts[i] == 0) {
+              ++i;
+            } else if (subTensorCounts.size() == 0) {
+              this->Wait(&recvRequests[i]);
+              subTensorCounts.push_back(tensor_counts[i]);
+              subEntries.push_back(entries[i]);
+              ++i;
+            } else if (this->Test(&recvRequests[i])) {
+              subTensorCounts.push_back(tensor_counts[i]);
+              subEntries.push_back(entries[i]);
+              ++i;
+            } else {
+              break;
+            }
           }
-          subEntries.insert(subEntries.begin(), entries.begin() + i, entries.begin() + j);
-          subTensorCounts.insert(subTensorCounts.begin(), tensor_counts.begin() + i, tensor_counts.begin() + j);
-          FusedPairwiseReduceWithComm(
-            subEntries, (uint8_t*)(grad_buffer + countSoFar), (uint8_t*)(recv_buffer + countSoFar),
-            horovod_datatype, subTensorCounts, tag, reduction_comms[comm_index],
-            (rank & level) == 0, normAndDots, global_state);
-          for (size_t k = 0; k < subTensorCounts.size(); ++k) {
-            countSoFar += subTensorCounts[k];
+          if (subTensorCounts.size() > 0) {
+            FusedPairwiseReduceWithComm(
+              subEntries, (uint8_t*)(grad_buffer + countSoFar), (uint8_t*)(recv_buffer + countSoFar),
+              horovod_datatype, subTensorCounts, tag, reduction_comms[comm_index],
+              (rank & level) == 0, normAndDots, global_state);
+            for (size_t k = 0; k < subTensorCounts.size(); ++k) {
+              countSoFar += subTensorCounts[k];
+            }
+            subEntries.clear();
+            subTensorCounts.clear();
           }
-          subEntries.clear();
-          subTensorCounts.clear();
-          i = j;
         }
       }
     }
