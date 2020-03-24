@@ -125,5 +125,70 @@ void AdasumMPI::PointToPointSendRecv(
     }
   }
 }
+
+
+
+void AdasumMPI::ISend(void* data_buffer,
+             int64_t buffer_length,
+             DataType horovod_datatype, int dst_rank,
+             int tag, MPI_Comm communicator,
+             HorovodGlobalState* global_state,
+             MPI_Request* request) {
+  int element_size = global_state->controller->GetTypeSize(horovod_datatype);
+  int count = buffer_length / element_size;
+  int status = MPI_Isend((char*)data_buffer, count,
+                     mpi_context_->GetMPIDataType(horovod_datatype),
+                     dst_rank, tag,
+                     communicator, request);
+  if (status != MPI_SUCCESS) {
+    throw std::logic_error(
+        "MPI_ISend failed, see MPI output for details.");
+  }
+}
+
+void AdasumMPI::IRecv(void* data_buffer,
+             int64_t buffer_length,
+             DataType horovod_datatype, int src_rank,
+             int tag, MPI_Comm communicator,
+             HorovodGlobalState* global_state,
+             MPI_Request* request) {
+  int element_size = global_state->controller->GetTypeSize(horovod_datatype);
+  int count = buffer_length / element_size;
+  int status = MPI_Irecv((char*)data_buffer, count,
+                     mpi_context_->GetMPIDataType(horovod_datatype),
+                     src_rank, tag,
+                     communicator, request);
+  if (status != MPI_SUCCESS) {
+    throw std::logic_error(
+        "MPI_IRecv failed, see MPI output for details.");
+  }
+}
+
+void AdasumMPI::Wait(MPI_Request* request) {
+  int status = MPI_Wait(request, MPI_STATUS_IGNORE);
+  if (status != MPI_SUCCESS) {
+    throw std::logic_error(
+        "MPI_Wait failed, see MPI output for details.");
+  }
+}
+
+void AdasumMPI::WaitAll(std::vector<MPI_Request>& requests) {
+  int status = MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+  if (status != MPI_SUCCESS) {
+    throw std::logic_error(
+        "MPI_Waitall failed, see MPI output for details.");
+  }
+}
+
+bool AdasumMPI::Test(MPI_Request* request) {
+  int flag;
+  int status = MPI_Test(request, &flag, MPI_STATUS_IGNORE);
+  if (status != MPI_SUCCESS) {
+    throw std::logic_error(
+        "MPI_Test failed, see MPI output for details.");
+  }
+  return flag;
+}
+
 } // namespace common
 } // namespace horovod

@@ -32,7 +32,7 @@ static inline bool IsPowerOfTwo(uint64_t x) {
 }
 
 // Interface for Adasum algorithm
-template <typename Communicator_type> class Adasum {
+template <typename Communicator_type, typename Request_type> class Adasum {
 public:
   Adasum(HorovodGlobalState* global_state) {
     // Allocate receive buffer size equal to the fusion buffer length
@@ -55,6 +55,26 @@ protected:
                                     DataType horovod_datatype, int dst_src_rank,
                                     int tag, Communicator_type communicator,
                                     HorovodGlobalState* global_state) = 0;
+
+  virtual void ISend(void* input_data_buffer,
+                     int64_t input_buffer_length,
+                     DataType horovod_datatype, int dst_rank,
+                     int tag, Communicator_type communicator,
+                     HorovodGlobalState* global_state,
+                     Request_type* request) = 0;
+
+  virtual void IRecv(void* output_data_buffer,
+                     int64_t output_buffer_length,
+                     DataType horovod_datatype, int src_rank,
+                     int tag, Communicator_type communicator,
+                     HorovodGlobalState* global_state,
+                     Request_type* request) = 0;
+
+  virtual void Wait(Request_type* request) = 0;
+
+  virtual void WaitAll(std::vector<Request_type>& request) = 0;
+
+  virtual bool Test(Request_type* request) = 0;
 
   virtual void SumAllreduceWithComm(std::vector<TensorTableEntry>& entries,
                                     void* data, int num_elements,
@@ -203,6 +223,10 @@ private:
 
     std::vector<std::vector<int>> nghrCountVec;
     std::vector<double> normAndDots(tensor_counts.size() * 3 * 2);
+    std::vector<Request_type> recvRequests(tensor_counts.size());
+    std::vector<Request_type> sendRequests;
+    std::vector<TensorTableEntry> subEntries;
+    std::vector<int> subTensorCounts;
 
     int nearest_power_2 = 1;
     for (nearest_power_2 = 1; (nearest_power_2 << 1) <= size;
@@ -259,6 +283,17 @@ private:
             tensor_counts[i] = tensor_counts[i];
             nghrCountVec[nghrCountVec_index][i] = 0;
           }
+          if (nghrCountVec[nghrCountVec_index][i] > 0) {
+            sendRequests.emplace_back();
+            this->ISend((char*)(&grad_buffer[sendOffset + nghrCountSoFar]),
+                        nghrCountVec[nghrCountVec_index][i] * per_element_size,
+                        horovod_datatype, neighbor_rank, tag, communicator, global_state, &sendRequests.back());
+          }
+          if (tensor_counts[i] > 0) {
+            this->IRecv((char*)(&recv_buffer[recvOffset + myCountSoFar]),
+                        tensor_counts[i] * per_element_size,
+                        horovod_datatype, neighbor_rank, tag, communicator, global_state, &recvRequests[i]);
+          }
           nghrCountSoFar += nghrCountVec[nghrCountVec_index][i];
           myCountSoFar += tensor_counts[i];
         }
@@ -284,26 +319,52 @@ private:
             nghrCountVec[nghrCountVec_index][i] = tensor_counts[i];
             tensor_counts[i] = 0;
           }
+          if (nghrCountVec[nghrCountVec_index][i] > 0) {
+            sendRequests.emplace_back();
+            this->ISend((char*)(&grad_buffer[sendOffset + nghrCountSoFar]),
+                        nghrCountVec[nghrCountVec_index][i] * per_element_size,
+                        horovod_datatype, neighbor_rank, tag, communicator, global_state, &sendRequests.back());
+          }
+          if (tensor_counts[i] > 0) {
+            this->IRecv((char*)(&recv_buffer[recvOffset + myCountSoFar]),
+                        tensor_counts[i] * per_element_size,
+                        horovod_datatype, neighbor_rank, tag, communicator, global_state, &recvRequests[i]);
+          }
           nghrCountSoFar += nghrCountVec[nghrCountVec_index][i];
           myCountSoFar += tensor_counts[i];
         }
       }
 
       nghrCountVec_index++;
-
-      this->PointToPointSendRecv(
-          (char*)(&grad_buffer[sendOffset]), nghrCount * per_element_size,
-          (char*)(&recv_buffer[recvOffset]), myCount * per_element_size,
-          horovod_datatype, neighbor_rank, tag, communicator, global_state);
       if ((rank & level) != 0) {
         grad_buffer = &grad_buffer[nghrCount];
         recv_buffer = &recv_buffer[nghrCount];
       }
-      FusedPairwiseReduceWithComm(
-          entries, (uint8_t*)grad_buffer, (uint8_t*)recv_buffer,
-          horovod_datatype, tensor_counts, tag, reduction_comms[comm_index],
-          (rank & level) == 0, normAndDots, global_state);
+      {
+        size_t countSoFar = 0;
+        for (size_t i = 0; i < tensor_counts.size();) {
+          this->Wait(&recvRequests[i]);
+          size_t j = i + 1;
+          while(j < tensor_counts.size() && this->Test(&recvRequests[j])) {
+            ++j;
+          }
+          subEntries.insert(subEntries.begin(), entries.begin() + i, entries.begin() + j);
+          subTensorCounts.insert(subTensorCounts.begin(), tensor_counts.begin() + i, tensor_counts.begin() + j);
+          FusedPairwiseReduceWithComm(
+            subEntries, (uint8_t*)(grad_buffer + countSoFar), (uint8_t*)(recv_buffer + countSoFar),
+            horovod_datatype, subTensorCounts, tag, reduction_comms[comm_index],
+            (rank & level) == 0, normAndDots, global_state);
+          for (size_t k = 0; k < subTensorCounts.size(); ++k) {
+            countSoFar += subTensorCounts[k];
+          }
+          subEntries.clear();
+          subTensorCounts.clear();
+          i = j;
+        }
+      }
     }
+    
+    this->WaitAll(sendRequests);
 
     for (level = (size >> 1); level > 0; level = (level >> 1)) {
       if (level < start_level) {

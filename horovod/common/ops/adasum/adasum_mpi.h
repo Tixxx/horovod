@@ -25,7 +25,7 @@
 namespace horovod {
 namespace common {
 
-class AdasumMPI : public Adasum<MPI_Comm> {
+class AdasumMPI : public Adasum<MPI_Comm, MPI_Request> {
 public:
   AdasumMPI(MPIContext* mpi_context, HorovodGlobalState* global_state);
 
@@ -41,6 +41,26 @@ protected:
                             DataType horovod_datatype, int dst_src_rank,
                             int tag, MPI_Comm communicator,
                             HorovodGlobalState* global_state) override;
+
+  void ISend(void* data_buffer,
+             int64_t buffer_length,
+             DataType horovod_datatype, int dst_rank,
+             int tag, MPI_Comm communicator,
+             HorovodGlobalState* global_state,
+             MPI_Request* request) override;
+
+  void IRecv(void* data_buffer,
+             int64_t buffer_length,
+             DataType horovod_datatype, int src_rank,
+             int tag, MPI_Comm communicator,
+             HorovodGlobalState* global_state,
+             MPI_Request* request) override;
+
+  void Wait(MPI_Request* request) override;
+
+  void WaitAll(std::vector<MPI_Request>& requests) override;
+
+  bool Test(MPI_Request* request) override;
 
   int GetLocalRankWithComm(MPI_Comm local_comm) override;
 
