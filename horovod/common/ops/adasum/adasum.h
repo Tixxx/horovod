@@ -225,7 +225,6 @@ private:
     std::vector<double> normAndDots(tensor_counts.size() * 3 * 2);
     std::vector<Request_type> recvRequests(tensor_counts.size());
     std::vector<Request_type> sendRequests;
-    std::vector<TensorTableEntry> subEntries;
     std::vector<int> subTensorCounts;
 
     int nearest_power_2 = 1;
@@ -342,38 +341,42 @@ private:
       }
       {
         size_t i = 0;
+        size_t first = 0;
         size_t countSoFar = 0;
         while (i < tensor_counts.size()) {
           for (;;) {
             if (i >= tensor_counts.size()) {
               break;
             } else if (tensor_counts[i] == 0) {
+              subTensorCounts.push_back(tensor_counts[i]);
               ++i;
             } else if (subTensorCounts.size() == 0) {
               this->Wait(&recvRequests[i]);
               subTensorCounts.push_back(tensor_counts[i]);
-              subEntries.push_back(entries[i]);
               ++i;
             } else if (this->Test(&recvRequests[i])) {
               subTensorCounts.push_back(tensor_counts[i]);
-              subEntries.push_back(entries[i]);
               ++i;
             } else {
               break;
             }
           }
           if (subTensorCounts.size() > 0) {
-            FusedPairwiseReduceWithComm(
-              subEntries, (uint8_t*)(grad_buffer + countSoFar), (uint8_t*)(recv_buffer + countSoFar),
-              horovod_datatype, subTensorCounts, tag, reduction_comms[comm_index],
-              (rank & level) == 0, normAndDots, global_state);
+            FusedPairwiseReducePrecompute(
+              (uint8_t*)(grad_buffer + countSoFar), (uint8_t*)(recv_buffer + countSoFar),
+              horovod_datatype, subTensorCounts, tag, (rank & level) == 0,
+              normAndDots.data() + (first * 3), global_state);
+            first = i;
             for (size_t k = 0; k < subTensorCounts.size(); ++k) {
               countSoFar += subTensorCounts[k];
             }
-            subEntries.clear();
             subTensorCounts.clear();
           }
         }
+        FusedPairwiseReduceFinish(
+          entries, (uint8_t*)(grad_buffer), (uint8_t*)(recv_buffer),
+          horovod_datatype, subTensorCounts, tag, reduction_comms[comm_index],
+          (rank & level) == 0, normAndDots, global_state);
       }
     }
     
@@ -407,6 +410,87 @@ private:
       myCount += nghrCount;
     }
     size = orgSize;
+  }
+
+  void FusedPairwiseReducePrecompute(uint8_t* a, uint8_t* b,
+                                     DataType horovod_datatype,
+                                     std::vector<int>& tensor_counts,
+                                     int layerid, bool isLeftNeighbor,
+                                     double* normAndDots,
+                                     HorovodGlobalState* global_state) {
+    int per_element_size =
+        global_state->controller->GetTypeSize(horovod_datatype);
+    int bytesSoFar = 0;
+    for (size_t i = 0; i < tensor_counts.size(); i++) {
+      double dotProduct = 0.;
+      double anormsq = 0.;
+      double bnormsq = 0.;
+
+      DispatchComputeDotAndNormSqrds(&a[bytesSoFar], &b[bytesSoFar],
+                                     horovod_datatype, tensor_counts[i],
+                                     dotProduct, anormsq, bnormsq, layerid);
+      normAndDots[i * 3] = dotProduct;
+      if (isLeftNeighbor) {
+        normAndDots[i * 3 + 1] = anormsq;
+        normAndDots[i * 3 + 2] = bnormsq;
+      } else {
+        normAndDots[i * 3 + 1] = bnormsq;
+        normAndDots[i * 3 + 2] = anormsq;
+      }
+      bytesSoFar += tensor_counts[i] * per_element_size;
+    }
+  }
+
+  void FusedPairwiseReduceFinish(std::vector<TensorTableEntry>& entries,
+                                   uint8_t* a, uint8_t* b,
+                                   DataType horovod_datatype,
+                                   std::vector<int>& tensor_counts, int layerid,
+                                   Communicator_type& comm, bool isLeftNeighbor,
+                                   std::vector<double>& normAndDots,
+                                   HorovodGlobalState* global_state) {
+    double sqrt_min;
+    if (horovod_datatype == DataType::HOROVOD_FLOAT16) {
+      sqrt_min = std::sqrt(6.1035156e-5);
+    } else if (horovod_datatype == DataType::HOROVOD_FLOAT32) {
+      sqrt_min = std::sqrt(FLT_MIN);
+    } else if (horovod_datatype == DataType::HOROVOD_FLOAT64) {
+      sqrt_min = std::sqrt(DBL_MIN);
+    } else {
+      throw std::logic_error("Unsupported data type.");
+    }
+
+    int per_element_size =
+        global_state->controller->GetTypeSize(horovod_datatype);
+
+    SumAllreduceWithComm(entries, (void*)normAndDots.data(),
+                         3 * tensor_counts.size(), DataType::HOROVOD_FLOAT64,
+                         comm, global_state);
+
+    int bytesSoFar = 0;
+    for (size_t i = 0; i < tensor_counts.size(); i++) {
+      double dotProduct = normAndDots[i * 3];
+      double anormsq;
+      double bnormsq;
+      if (isLeftNeighbor) {
+        anormsq = normAndDots[i * 3 + 1];
+        bnormsq = normAndDots[i * 3 + 2];
+      } else {
+        bnormsq = normAndDots[i * 3 + 1];
+        anormsq = normAndDots[i * 3 + 2];
+      }
+
+      double acoeff = 0.5;
+      double bcoeff = 0.5;
+      if (anormsq >= sqrt_min && bnormsq >= sqrt_min) {
+        acoeff = 1.0 - dotProduct / anormsq * 0.5;
+        bcoeff = 1.0 - dotProduct / bnormsq * 0.5;
+      }
+
+      DispatchScaledAdd(horovod_datatype, tensor_counts[i], acoeff,
+                        &a[bytesSoFar], bcoeff, &b[bytesSoFar], layerid);
+      bytesSoFar += tensor_counts[i] * per_element_size;
+    }
+    SynchronizeScaledAdd();
   }
 
   void FusedPairwiseReduceWithComm(std::vector<TensorTableEntry>& entries,
